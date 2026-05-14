@@ -1,14 +1,27 @@
-# typescript-library-template
+# mcpc
 
-Personal template for creating TypeScript libraries.
+TODO: A short description of what the library does and why people might want to use it.
 
-## Quick start
+## Usage
 
-*Prequisites: Node.js, Git, and the GitHub CLI (authed). AI agents like [Claude Code](https://www.anthropic.com/claude-code) should be able to complete all these steps.*
+TODO: Add usage instructions
 
-1. Create a new repository from this template: `gh repo create <name> --template domdomegg/typescript-library-template --clone --public` (or `--private`)
-2. Run the setup script: `node setup.js [--private]`
-   - `--private` will prevent the package being published to NPM. Usually packages should be public and will be published, but if you're unsure ask the user.
-3. Complete the TODOs in `package.json` and `README.md` (don't change anything else!)
-4. Run `npm install`, then check everything works with `npm run test && npm run build && npm run lint`
-5. Commit the changes with the commit message 'Initialization from template'
+## Contributing
+
+Pull requests are welcomed on GitHub! To get started:
+
+1. Install Git and Node.js
+2. Clone the repository
+3. Install dependencies with `npm install`
+4. Run `npm run test` to run tests
+5. Build with `npm run build`
+
+## Releases
+
+Versions follow the [semantic versioning spec](https://semver.org/).
+
+To release:
+
+1. Use `npm version <major | minor | patch>` to bump the version
+2. Run `git push --follow-tags` to push with tags
+3. Wait for GitHub Actions to publish to the NPM registry.

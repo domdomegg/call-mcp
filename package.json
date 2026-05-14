@@ -1,12 +1,12 @@
 {
-  "name": "typescript-library-template",
+  "name": "mcpc",
   "version": "0.0.0",
-  "description": "Template for creating TypeScript libraries",
+  "description": "TODO: A short description of what the library does and why people might want to use it.",
   "license": "MIT",
   "author": "Adam Jones (domdomegg)",
   "repository": {
     "type": "git",
-    "url": "https://github.com/domdomegg/typescript-library-template.git"
+    "url": "https://github.com/domdomegg/mcpc.git"
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
