@@ -1,0 +1,371 @@
+#!/usr/bin/env node
+import {parseArgs} from 'node:util';
+import {AuthError, getToken} from './auth.js';
+import {callTool, connect, listTools} from './client.js';
+import {DiscoveryError, listServers, resolveServer} from './discovery.js';
+import {ConnectorAuthError} from './transport.js';
+
+const HELP = `mcpc — a CLI client for your claude.ai-configured MCP servers
+
+mcpc talks to the MCP servers ("connectors") you have set up in claude.ai. It
+reuses the Claude Code OAuth token, so there is no separate login.
+
+USAGE
+  mcpc <command> [arguments] [options]
+
+COMMANDS
+  list                       List your claude.ai MCP servers.
+  tools <server>             List the tools a server exposes.
+  call  <server> <tool>      Call a tool on a server.
+  help                       Show this help. (also: -h, --help)
+
+ARGUMENTS
+  <server>   A server id (mcpsrv_...) or display name. Display names are
+             matched case-insensitively; a unique name prefix also works,
+             e.g. 'Google Drive', 'google', or the full id.
+  <tool>     The exact tool name as shown by 'mcpc tools <server>'.
+
+OPTIONS
+  --args <json>   JSON object of arguments for 'call' (default: {}).
+                  Must be a JSON object, e.g. --args '{"query":"report"}'.
+  --full          Include full detail in the output. By default mcpc prints
+                  slim objects; --full adds tool input/output schemas,
+                  annotations, raw server fields, and the complete tool-call
+                  result envelope.
+  -h, --help      Show this help.
+
+OUTPUT
+  Every command prints JSON to stdout — on success and on error — so output
+  is always safe to pipe into jq or parse in a script. Errors are a JSON
+  object { "error": ... } and the process exits non-zero. Pretty-print with
+  'mcpc list | jq'.
+
+  list           default: [{ id, display_name, url }]
+                 --full:  raw /v1/mcp_servers objects
+  tools <s>      default: { server, tools: [{ name, description }] }
+                 --full:  tools include inputSchema, outputSchema, annotations
+  call <s> <t>   default: the tool's structuredContent, or its text content
+                 --full:  the complete MCP CallToolResult { content,
+                          structuredContent, isError }
+
+QUOTING
+  --args takes a JSON string, and JSON uses double quotes — so wrap the whole
+  value in single quotes: --args '{"query":"report"}'. The jq examples below
+  use single quotes for the same reason. Escaping rules differ between shells
+  (bash/zsh vs fish vs nushell); if quoting misbehaves, run 'echo $SHELL' to
+  see which shell you are in and check its quoting rules. As a fallback that
+  needs no escaping, write the JSON to a file and pass it:
+    mcpc call <server> <tool> --args "$(cat args.json)"
+
+EXAMPLES
+  Core flows
+    mcpc list
+    mcpc tools 'Google Drive'
+    mcpc call 'Google Drive' search_files --args '{"query":"name contains \\'q3\\'"}'
+    mcpc call Aggregator gmail__get_profile
+
+  Progressive disclosure — don't load every schema, search first
+    A server can expose hundreds of tools. Even the slim 'tools' output (name
+    + description) can be large, so don't read it whole — filter it with jq:
+    narrow to a keyword, or take just the names. Fetch a full schema only for
+    the one tool you actually need. This keeps context small — the same idea
+    as https://www.anthropic.com/engineering/code-execution-with-mcp
+
+    Just the tool names (the leanest possible view):
+      mcpc tools Aggregator | jq -r '.tools[].name'
+
+    Find tools by keyword — matches name AND description, case-insensitive
+    (the ;"i" is jq's regex flag). Returns name + description so you can tell
+    which match is the one you want:
+      mcpc tools Aggregator | jq -r \\
+        '.tools[] | select((.name + " " + .description)|test("calendar";"i"))
+                  | "\\(.name)\\t\\(.description)"'
+
+    Search every server at once (which connector has a "send email" tool?):
+      mcpc list | jq -r '.[].id' | while read -r id; do
+        mcpc tools "$id" | jq -r --arg s "$id" \\
+          '.tools[] | select((.name + " " + .description)|test("email";"i"))
+                    | "\\($s)\\t\\(.name)"'
+      done
+
+    Then — and only then — pull the full schema for the chosen tool:
+      mcpc tools Aggregator --full \\
+        | jq '.tools[] | select(.name=="gmail__threads_list") | .inputSchema'
+
+  Filter results before they reach you (don't pipe a 10k-row payload around)
+    mcpc call Aggregator gmail__threads_list --args '{"maxResults":100}' \\
+      | jq '[.threads[] | {id, snippet}]'
+
+  Nested / complex arguments
+    mcpc call Aggregator gmail__message_send \\
+      --args '{"to":["a@example.com"],"subject":"Hi","body":"text"}'
+
+  Large or binary results — keep them out of your context
+    Each 'call' is one isolated invocation; mcpc is just transport. To chain
+    tools, filter, or orchestrate, pipe stdout through jq in the shell — not
+    through an LLM context. For binary data (images, files), don't print
+    base64 to the terminal: with '--full', pull the data out with jq and
+    decode it straight to a file, so the bytes never hit context.
+      mcpc call Aggregator some__tool --full \\
+        | jq -r '.content[] | select(.type=="image") | .data' \\
+        | base64 -d > /tmp/out.png
+
+  Referring to a server by id instead of name
+    mcpc tools mcpsrv_01DjiBkJL2oUsCpddEd4h56J
+
+  Scripting (errors land in stdout too, so this stays robust)
+    out=$(mcpc call 'Google Drive' search_files --args '{"query":"x"}')
+    echo "$out" | jq -e '.error' >/dev/null \\
+      && echo "failed: $(echo "$out" | jq -r '.error')" \\
+      || echo "$out" | jq '.files'
+
+AUTH
+  mcpc resolves the Claude Code token in this order:
+    1. CLAUDE_CODE_OAUTH_TOKEN environment variable, if set.
+    2. macOS: the login Keychain, then ~/.claude/.credentials.json.
+    3. Linux / Windows: ~/.claude/.credentials.json
+       (or $CLAUDE_CONFIG_DIR/.credentials.json).
+  If the token is missing or expired, run 'claude' once to refresh it. mcpc
+  never writes credentials back.
+
+  A connector can also need its own authorization (e.g. a Google login). When
+  that happens mcpc returns { "error": ..., "authUrl": ... } — open that URL
+  to (re-)connect the server in claude.ai settings.
+`;
+
+/** Raised internally when the stdout reader has gone away (broken pipe). */
+class BrokenPipe extends Error {}
+
+/**
+ * Writes a string to stdout and resolves only once it has been fully flushed.
+ * `process.stdout.write` can return `false` for large payloads when stdout is
+ * a pipe; exiting before the buffer drains truncates the output (e.g. jq then
+ * sees a half-written JSON document). Awaiting the drain prevents that.
+ *
+ * If the reader has closed the pipe (EPIPE — e.g. `mcpc ... | head`), this is
+ * normal Unix behaviour, not an error: it surfaces as BrokenPipe so the caller
+ * can exit quietly.
+ */
+async function writeOut(text: string): Promise<void> {
+	return new Promise((resolve, reject) => {
+		process.stdout.write(text, (err) => {
+			if (!err) {
+				resolve();
+				return;
+			}
+
+			if ((err as NodeJS.ErrnoException).code === 'EPIPE') {
+				reject(new BrokenPipe());
+				return;
+			}
+
+			reject(err);
+		});
+	});
+}
+
+/** Emits a success payload as compact JSON on stdout. */
+async function emit(data: unknown): Promise<number> {
+	await writeOut(`${JSON.stringify(data)}\n`);
+	return 0;
+}
+
+/**
+ * Emits an error as a JSON object on stdout (not stderr) so that piping into
+ * jq or a script can never silently swallow it. Returns the process exit code.
+ */
+async function fail(error: string, extras: Record<string, unknown> = {}): Promise<number> {
+	await writeOut(`${JSON.stringify({error, ...extras})}\n`);
+	return 1;
+}
+
+async function main(argv: string[]): Promise<number> {
+	let parsed;
+	try {
+		parsed = parseArgs({
+			args: argv,
+			allowPositionals: true,
+			options: {
+				args: {type: 'string'},
+				full: {type: 'boolean', default: false},
+				help: {type: 'boolean', short: 'h', default: false},
+			},
+		});
+	} catch (err) {
+		return fail(`Invalid arguments: ${(err as Error).message}`, {hint: 'Run `mcpc --help`.'});
+	}
+
+	const {values, positionals} = parsed;
+	const command = positionals[0];
+
+	if (values.help || command === 'help') {
+		await writeOut(HELP);
+		return 0;
+	}
+
+	if (!command) {
+		await writeOut(HELP);
+		return fail('No command given.', {hint: 'Run `mcpc --help` for usage.'});
+	}
+
+	switch (command) {
+		case 'list':
+			return cmdList(values.full);
+		case 'tools':
+			return cmdTools(positionals[1], values.full);
+		case 'call':
+			return cmdCall(positionals[1], positionals[2], values.args, values.full);
+		default:
+			return fail(`Unknown command: ${command}`, {
+				hint: 'Valid commands: list, tools, call. Run `mcpc --help`.',
+			});
+	}
+}
+
+async function cmdList(full: boolean): Promise<number> {
+	const token = await getToken();
+	const servers = await listServers(token);
+	if (full) {
+		return emit(servers);
+	}
+
+	return emit(servers.map((s) => ({id: s.id, display_name: s.display_name, url: s.url})));
+}
+
+async function cmdTools(ref: string | undefined, full: boolean): Promise<number> {
+	if (!ref) {
+		return fail('Missing <server> argument.', {
+			hint: 'Usage: mcpc tools <server>. Run `mcpc list` to see servers.',
+		});
+	}
+
+	const token = await getToken();
+	const server = resolveServer(await listServers(token), ref);
+
+	const client = await connect(server.id, token.accessToken);
+	try {
+		const tools = await listTools(client);
+		if (full) {
+			return await emit({server: {id: server.id, display_name: server.display_name}, tools});
+		}
+
+		return await emit({
+			server: {id: server.id, display_name: server.display_name},
+			tools: tools.map((t) => ({name: t.name, description: t.description ?? null})),
+		});
+	} finally {
+		await client.close();
+	}
+}
+
+async function cmdCall(
+	ref: string | undefined,
+	toolName: string | undefined,
+	argsJson: string | undefined,
+	full: boolean,
+): Promise<number> {
+	if (!ref || !toolName) {
+		return fail('Missing argument(s).', {
+			hint: 'Usage: mcpc call <server> <tool> [--args JSON]. Run `mcpc tools <server>` to see tool names.',
+		});
+	}
+
+	let args: Record<string, unknown> = {};
+	if (argsJson !== undefined) {
+		let parsedArgs: unknown;
+		try {
+			parsedArgs = JSON.parse(argsJson);
+		} catch (err) {
+			return fail(`--args is not valid JSON: ${(err as Error).message}`, {
+				hint: 'Pass a JSON object, e.g. --args \'{"query":"report"}\'.',
+			});
+		}
+
+		if (typeof parsedArgs !== 'object' || parsedArgs === null || Array.isArray(parsedArgs)) {
+			return fail('--args must be a JSON object.', {
+				hint: 'e.g. --args \'{"query":"report"}\', not a list or bare value.',
+			});
+		}
+
+		args = parsedArgs as Record<string, unknown>;
+	}
+
+	const token = await getToken();
+	const server = resolveServer(await listServers(token), ref);
+
+	const client = await connect(server.id, token.accessToken);
+	try {
+		const result = (await callTool(client, toolName, args)) as {
+			content?: {type: string; text?: string}[];
+			structuredContent?: unknown;
+			isError?: boolean;
+		};
+
+		if (full) {
+			return await emit(result);
+		}
+
+		// Slim: prefer structuredContent; otherwise fall back to text content.
+		if (result?.structuredContent !== undefined) {
+			return await emit(result.structuredContent);
+		}
+
+		const text = (result?.content ?? [])
+			.filter((c) => c.type === 'text' && c.text !== undefined)
+			.map((c) => c.text)
+			.join('\n');
+		const nonText = (result?.content ?? []).filter((c) => c.type !== 'text');
+		if (nonText.length > 0) {
+			// Non-text content (images, resources, ...) has no slim form — return it.
+			return await emit({content: result.content, isError: result.isError ?? false});
+		}
+
+		return await emit(text);
+	} finally {
+		await client.close();
+	}
+}
+
+async function handleError(err: unknown): Promise<number> {
+	// Broken pipe (e.g. `mcpc ... | head`) is normal — exit quietly, code 0.
+	if (err instanceof BrokenPipe) {
+		return 0;
+	}
+
+	if (err instanceof ConnectorAuthError) {
+		return fail(err.message, {
+			authUrl: err.authUrl,
+			hint: 'Open authUrl to connect or re-authorize this connector in claude.ai settings.',
+		});
+	}
+
+	if (err instanceof AuthError) {
+		return fail(err.message, {hint: 'See `mcpc --help` (AUTH section).'});
+	}
+
+	if (err instanceof DiscoveryError) {
+		// DiscoveryError messages already include the recovery step.
+		return fail(err.message);
+	}
+
+	return fail(err instanceof Error ? err.message : String(err));
+}
+
+// A reader closing the pipe early (EPIPE) can emit an 'error' event on the
+// stdout socket itself, before any write callback runs. Swallow that case so
+// it doesn't crash as an unhandled error; other stdout errors still throw.
+process.stdout.on('error', (err: NodeJS.ErrnoException) => {
+	if (err.code === 'EPIPE') {
+		process.exit(0);
+	}
+
+	throw err;
+});
+
+// Sets process.exitCode rather than calling process.exit(), so Node drains
+// stdout before exiting — process.exit() would truncate large JSON payloads.
+void main(process.argv.slice(2))
+	.catch(handleError)
+	.then((code) => {
+		process.exitCode = code;
+	});

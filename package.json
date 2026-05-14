@@ -1,28 +1,37 @@
 {
   "name": "mcpc",
   "version": "0.0.0",
-  "description": "TODO: A short description of what the library does and why people might want to use it.",
+  "description": "A CLI client for the MCP servers configured in claude.ai, reusing the Claude Code token.",
   "license": "MIT",
   "author": "Adam Jones (domdomegg)",
   "repository": {
     "type": "git",
     "url": "https://github.com/domdomegg/mcpc.git"
   },
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "type": "module",
+  "bin": {
+    "mcpc": "dist/cli.js"
+  },
   "files": [
     "dist"
   ],
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest --watch",
     "lint": "eslint",
     "clean": "rm -rf dist",
-    "build": "tsc --project tsconfig.build.json",
+    "build": "tsc --project tsconfig.build.json && chmod +x dist/cli.js",
     "prepublishOnly": "npm run clean && npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0"
   },
   "devDependencies": {
     "@tsconfig/node-lts": "^22.0.2",
+    "@types/node": "^25.7.0",
     "eslint": "^9.32.0",
     "eslint-config-domdomegg": "^2.0.9",
     "tsconfig-domdomegg": "^1.0.0",
