@@ -2,7 +2,10 @@ import {randomUUID} from 'node:crypto';
 import type {Transport} from '@modelcontextprotocol/sdk/shared/transport.js';
 import type {JSONRPCMessage} from '@modelcontextprotocol/sdk/types.js';
 
-const MCP_PROXY_URL = 'https://mcp-proxy.anthropic.com';
+// TEST_ONLY_PROXY_URL_OVERRIDE points the MCP proxy at a mock server in the
+// e2e tests. It is not a supported configuration knob and is intentionally
+// undocumented — do not rely on it.
+const MCP_PROXY_URL = process.env.TEST_ONLY_PROXY_URL_OVERRIDE ?? 'https://mcp-proxy.anthropic.com';
 const MCP_PROXY_PATH = '/v1/mcp/{server_id}';
 
 /** Where a user re-authorizes a claude.ai connector (the connectors settings page). */
