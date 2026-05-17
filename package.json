@@ -1,5 +1,5 @@
 {
-  "name": "mcpc",
+  "name": "cmpc",
   "version": "1.0.0",
   "description": "A CLI client for the MCP servers configured in claude.ai, reusing the Claude Code token.",
   "license": "MIT",

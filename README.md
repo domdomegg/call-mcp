@@ -9,8 +9,10 @@ is always safe to pipe into `jq` or parse in a script.
 ## Install
 
 ```
-npm install -g mcpc
+npm install -g cmpc
 ```
+
+The package is published as `cmpc`; the command it installs is `mcpc`.
 
 Requires Node 20+. Works on macOS, Linux, and Windows — anywhere Claude Code
 has stored a token (or where `CLAUDE_CODE_OAUTH_TOKEN` is set).
