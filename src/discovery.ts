@@ -1,6 +1,9 @@
 import type {Token} from './auth.js';
 
-const BASE_API_URL = 'https://api.anthropic.com';
+// TEST_ONLY_API_URL_OVERRIDE points the discovery API at a mock server in the
+// e2e tests. It is not a supported configuration knob and is intentionally
+// undocumented — do not rely on it.
+const BASE_API_URL = process.env.TEST_ONLY_API_URL_OVERRIDE ?? 'https://api.anthropic.com';
 const MCP_SERVERS_BETA = 'mcp-servers-2025-12-04';
 
 export type McpServer = {
