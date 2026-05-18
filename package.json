@@ -1,16 +1,16 @@
 {
-  "name": "cmpc",
+  "name": "call-mcp",
   "version": "1.0.0",
   "description": "A CLI client for the MCP servers configured in claude.ai, reusing the Claude Code token.",
   "license": "MIT",
   "author": "Adam Jones (domdomegg)",
   "repository": {
     "type": "git",
-    "url": "https://github.com/domdomegg/mcpc.git"
+    "url": "https://github.com/domdomegg/call-mcp.git"
   },
   "type": "module",
   "bin": {
-    "mcpc": "dist/cli.js"
+    "call-mcp": "dist/cli.js"
   },
   "files": [
     "dist"

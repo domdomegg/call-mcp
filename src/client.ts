@@ -6,7 +6,7 @@ import {ProxyTransport} from './transport.js';
 export async function connect(serverId: string, accessToken: string): Promise<Client> {
 	const transport = new ProxyTransport(serverId, accessToken);
 	const client = new Client(
-		{name: 'mcpc', version: '0.1.0'},
+		{name: 'call-mcp', version: '0.1.0'},
 		{capabilities: {}},
 	);
 	await client.connect(transport);

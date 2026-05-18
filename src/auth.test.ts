@@ -42,7 +42,7 @@ const savedEnv = {
 };
 
 beforeEach(() => {
-	tmpDir = mkdtempSync(join(tmpdir(), 'mcpc-auth-'));
+	tmpDir = mkdtempSync(join(tmpdir(), 'call-mcp-auth-'));
 	delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
 	process.env.CLAUDE_CONFIG_DIR = tmpDir;
 });

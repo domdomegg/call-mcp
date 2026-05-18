@@ -1,4 +1,4 @@
-# mcpc
+# call-mcp
 
 A CLI client for the MCP servers you've configured in claude.ai (your "org
 connectors"). It reuses the Claude Code OAuth token — no separate login.
@@ -9,10 +9,8 @@ is always safe to pipe into `jq` or parse in a script.
 ## Install
 
 ```
-npm install -g cmpc
+npm install -g call-mcp
 ```
-
-The package is published as `cmpc`; the command it installs is `mcpc`.
 
 Requires Node 20+. Works on macOS, Linux, and Windows — anywhere Claude Code
 has stored a token (or where `CLAUDE_CODE_OAUTH_TOKEN` is set).
@@ -20,10 +18,10 @@ has stored a token (or where `CLAUDE_CODE_OAUTH_TOKEN` is set).
 ## Usage
 
 ```
-mcpc list                                List your claude.ai MCP servers
-mcpc tools <server>                      List the tools a server exposes
-mcpc call <server> <tool> [--args JSON]  Call a tool
-mcpc help                                Full help with examples
+call-mcp list                                List your claude.ai MCP servers
+call-mcp tools <server>                      List the tools a server exposes
+call-mcp call <server> <tool> [--args JSON]  Call a tool
+call-mcp help                                Full help with examples
 ```
 
 `<server>` is a server id (`mcpsrv_...`) or a display name (a unique
@@ -31,7 +29,7 @@ case-insensitive prefix also works, e.g. `google`).
 
 `--args <json>` passes a JSON object of arguments to `call`.
 
-`--full` includes full detail in the output. By default mcpc prints slim
+`--full` includes full detail in the output. By default call-mcp prints slim
 objects; `--full` adds tool input/output schemas, raw server fields, and the
 complete tool-call result envelope. Keep it slim and search first — fetch a
 full schema only for the tool you actually need.
@@ -39,21 +37,21 @@ full schema only for the tool you actually need.
 ### Examples
 
 ```sh
-mcpc list
-mcpc tools 'Google Drive'
-mcpc call 'Google Drive' search_files --args '{"query":"name contains '\''q3'\''"}'
-mcpc call Aggregator gmail__threads_list --args '{"maxResults":5,"q":"is:unread"}'
+call-mcp list
+call-mcp tools 'Google Drive'
+call-mcp call 'Google Drive' search_files --args '{"query":"name contains '\''q3'\''"}'
+call-mcp call Aggregator gmail__threads_list --args '{"maxResults":5,"q":"is:unread"}'
 
 # Search tools by keyword (name + description) without loading any schemas
-mcpc tools Aggregator | jq -r '.tools[]
+call-mcp tools Aggregator | jq -r '.tools[]
   | select((.name + " " + .description) | test("calendar";"i")) | .name'
 
 # Then pull the full schema for just the one you want
-mcpc tools Aggregator --full | jq '.tools[]
+call-mcp tools Aggregator --full | jq '.tools[]
   | select(.name == "gmail__threads_list") | .inputSchema'
 ```
 
-Run `mcpc help` for the full set, including cross-server tool search and
+Run `call-mcp help` for the full set, including cross-server tool search and
 error-handling recipes.
 
 ## How it works
@@ -67,7 +65,7 @@ error-handling recipes.
      `<config-dir>/.credentials.json`.
 
   The config dir is `CLAUDE_CONFIG_DIR` if set, else `~/.claude`. The token
-  already carries the `user:mcp_servers` scope. mcpc never writes credentials
+  already carries the `user:mcp_servers` scope. call-mcp never writes credentials
   back; if the token has expired it tells you to run `claude` once to refresh
   it.
 - **Discovery**: `GET https://api.anthropic.com/v1/mcp_servers` lists your
@@ -75,14 +73,14 @@ error-handling recipes.
 - **Tool calls**: each server is reached through the claude.ai MCP proxy at
   `https://mcp-proxy.anthropic.com/v1/mcp/{server_id}`, speaking MCP over
   Streamable HTTP. The proxy uses a client-supplied `X-Mcp-Client-Session-Id`
-  rather than a server-issued session id, so mcpc ships a small custom
+  rather than a server-issued session id, so call-mcp ships a small custom
   transport (`src/transport.ts`) on top of the official MCP SDK's `Client`.
 
-Only claude.ai-hosted servers are supported — not local/stdio or arbitrary
-remote MCP servers.
+Currently this targets claude.ai-hosted connectors specifically — not
+local/stdio or arbitrary remote MCP servers.
 
 A connector can also need its own authorization (e.g. a Google login). When
-that happens mcpc returns `{ "error": ..., "authUrl": ... }` — open that URL to
+that happens call-mcp returns `{ "error": ..., "authUrl": ... }` — open that URL to
 (re-)connect the server in claude.ai settings.
 
 ### Source layout
@@ -105,7 +103,7 @@ Pull requests are welcomed on GitHub! To get started:
 4. Run `npm run test` to run tests
 5. Build with `npm run build`
 
-To try your build locally, `npm link` it (symlinks `mcpc` to your build and
+To try your build locally, `npm link` it (symlinks `call-mcp` to your build and
 picks up rebuilds), or run `node dist/cli.js` directly.
 
 ## Releases

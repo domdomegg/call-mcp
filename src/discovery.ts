@@ -72,7 +72,7 @@ export function resolveServer(servers: McpServer[], ref: string): McpServer {
 			.join(', ')}`);
 	}
 
-	throw new DiscoveryError(`No MCP server matches "${ref}". Run \`mcpc list\` to see available servers.`);
+	throw new DiscoveryError(`No MCP server matches "${ref}". Run \`call-mcp list\` to see available servers.`);
 }
 
 /** Returns the single server matching `predicate`, or undefined if zero or many match. */

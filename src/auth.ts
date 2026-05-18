@@ -39,7 +39,7 @@ export class AuthError extends Error {}
  *
  * The config dir is CLAUDE_CONFIG_DIR if set, otherwise ~/.claude.
  *
- * mcpc never writes credentials back. On expiry it tells the user to refresh
+ * call-mcp never writes credentials back. On expiry it tells the user to refresh
  * via Claude Code rather than running the OAuth refresh flow itself.
  */
 export async function getToken(): Promise<Token> {

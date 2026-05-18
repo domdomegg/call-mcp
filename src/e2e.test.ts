@@ -12,7 +12,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const cliPath = join(here, '..', 'dist', 'cli.js');
 
 /**
- * End-to-end tests: spawn the real `mcpc` binary as a subprocess and assert on
+ * End-to-end tests: spawn the real `call-mcp` binary as a subprocess and assert on
  * its external contract — argv in, JSON on stdout, exit code out. The two
  * Anthropic HTTP endpoints (the discovery API and the MCP proxy) are replaced
  * with a local mock via the TEST_ONLY_*_URL_OVERRIDE env vars, so no real
@@ -175,7 +175,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-	// `mcpc` uses fetch with keep-alive, so sockets to the mock may still be
+	// `call-mcp` uses fetch with keep-alive, so sockets to the mock may still be
 	// open. server.close() alone would wait for them to drain (hanging the
 	// test worker); closeAllConnections() drops them so close() can finish.
 	server.closeAllConnections();
@@ -189,7 +189,7 @@ afterAll(async () => {
 type RunResult = {stdout: string; stderr: string; status: number; json: any};
 
 /**
- * Runs `mcpc <args>` against the mock server and parses its stdout as JSON.
+ * Runs `call-mcp <args>` against the mock server and parses its stdout as JSON.
  *
  * Uses async execFile, not spawnSync: the mock HTTP server runs in this same
  * process, so a synchronous spawn would block the event loop and deadlock —
@@ -356,10 +356,10 @@ describe('errors are JSON on stdout with a non-zero exit', () => {
 });
 
 describe('help', () => {
-	test('`mcpc help` prints usage and exits 0', async () => {
+	test('`call-mcp help` prints usage and exits 0', async () => {
 		const {stdout, status} = await runMcpc(['help']);
 		expect(status).toBe(0);
-		expect(stdout).toMatch(/^mcpc — a CLI client/);
+		expect(stdout).toMatch(/^call-mcp — a CLI client/);
 		expect(stdout).toContain('USAGE');
 		expect(stdout).toContain('EXAMPLES');
 	});
@@ -367,6 +367,6 @@ describe('help', () => {
 	test('--help is equivalent to help', async () => {
 		const {stdout, status} = await runMcpc(['--help']);
 		expect(status).toBe(0);
-		expect(stdout).toMatch(/^mcpc — a CLI client/);
+		expect(stdout).toMatch(/^call-mcp — a CLI client/);
 	});
 });
