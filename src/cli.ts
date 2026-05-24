@@ -28,6 +28,8 @@ ARGUMENTS
 OPTIONS
   --args <json>   JSON object of arguments for 'call' (default: {}).
                   Must be a JSON object, e.g. --args '{"query":"report"}'.
+                  Pass --args - to read the JSON from stdin (no size limit;
+                  good for large payloads like file uploads). See STDIN below.
   --full          Include full detail in the output. By default call-mcp prints
                   slim objects; --full adds tool input/output schemas,
                   annotations, raw server fields, and the complete tool-call
@@ -53,9 +55,16 @@ QUOTING
   value in single quotes: --args '{"query":"report"}'. The jq examples below
   use single quotes for the same reason. Escaping rules differ between shells
   (bash/zsh vs fish vs nushell); if quoting misbehaves, run 'echo $SHELL' to
-  see which shell you are in and check its quoting rules. As a fallback that
-  needs no escaping, write the JSON to a file and pass it:
-    call-mcp call <server> <tool> --args "$(cat args.json)"
+  see which shell you are in and check its quoting rules.
+
+STDIN (--args -)
+  Pass --args - to read the JSON object from stdin instead of the command line.
+  This avoids all shell quoting/escaping AND the OS argument-size limit (ARG_MAX,
+  ~1MB on macOS) that otherwise breaks large payloads — e.g. base64-encoded file
+  uploads. Use it whenever args are large or awkward to quote:
+    cat args.json | call-mcp call <server> <tool> --args -
+    jq -n --arg b64 "$(base64 < big.pdf)" '{file_content_base64:$b64,filename:"big.pdf"}' \\
+      | call-mcp call <server> upload_tool --args -
 
 EXAMPLES
   Core flows
@@ -162,6 +171,16 @@ async function writeOut(text: string): Promise<void> {
 			reject(err);
 		});
 	});
+}
+
+/** Reads all of stdin as a UTF-8 string. Used by `--args -` for large payloads. */
+async function readStdin(): Promise<string> {
+	const chunks: Buffer[] = [];
+	for await (const chunk of process.stdin) {
+		chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string));
+	}
+
+	return Buffer.concat(chunks).toString('utf8');
 }
 
 /** Emits a success payload as compact JSON on stdout. */
@@ -272,9 +291,29 @@ async function cmdCall(
 
 	let args: Record<string, unknown> = {};
 	if (argsJson !== undefined) {
+		// `--args -` reads the JSON from stdin. This sidesteps the OS argv size
+		// limit (ARG_MAX, ~1MB on macOS) that otherwise breaks large payloads
+		// like base64-encoded file uploads. Compose with: `cat big.json | call-mcp call … --args -`.
+		let rawJson = argsJson;
+		if (argsJson === '-') {
+			try {
+				rawJson = await readStdin();
+			} catch (err) {
+				return fail(`Could not read --args from stdin: ${(err as Error).message}`, {
+					hint: 'Pipe JSON in, e.g. `cat args.json | call-mcp call <server> <tool> --args -`.',
+				});
+			}
+
+			if (rawJson.trim() === '') {
+				return fail('--args is - but stdin was empty.', {
+					hint: 'Pipe a JSON object in, e.g. `echo \'{"q":"x"}\' | call-mcp … --args -`.',
+				});
+			}
+		}
+
 		let parsedArgs: unknown;
 		try {
-			parsedArgs = JSON.parse(argsJson);
+			parsedArgs = JSON.parse(rawJson);
 		} catch (err) {
 			return fail(`--args is not valid JSON: ${(err as Error).message}`, {
 				hint: 'Pass a JSON object, e.g. --args \'{"query":"report"}\'.',
