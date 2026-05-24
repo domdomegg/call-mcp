@@ -195,13 +195,15 @@ type RunResult = {stdout: string; stderr: string; status: number; json: any};
  * process, so a synchronous spawn would block the event loop and deadlock —
  * the child could never connect to a server whose loop is frozen.
  */
-async function runMcpc(args: string[], envOverrides: Record<string, string> = {}): Promise<RunResult> {
+async function runMcpc(args: string[], envOverrides: Record<string, string> = {}, stdin?: string): Promise<RunResult> {
 	return new Promise((resolve) => {
-		execFile(
+		const child = execFile(
 			'node',
 			[cliPath, ...args],
 			{
 				encoding: 'utf8',
+				// Default is 1MB; the large-payload stdin test echoes ~2MB back.
+				maxBuffer: 16 * 1024 * 1024,
 				env: {
 					...process.env,
 					CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oat01-e2e-fixture',
@@ -226,6 +228,9 @@ async function runMcpc(args: string[], envOverrides: Record<string, string> = {}
 				});
 			},
 		);
+		if (stdin !== undefined) {
+			child.stdin?.end(stdin);
+		}
 	});
 }
 
@@ -305,6 +310,40 @@ describe('call', () => {
 			content: [{type: 'text'}],
 			structuredContent: {email: 'test@example.com'},
 		});
+	});
+
+	test('--args - reads the JSON object from stdin', async () => {
+		const {json, status} = await runMcpc(
+			['call', 'Aggregator', 'echo', '--args', '-'],
+			{},
+			'{"message":"from stdin"}',
+		);
+		expect(status).toBe(0);
+		expect(json).toBe('from stdin');
+	});
+
+	test('--args - handles a large payload that would exceed the argv size limit', async () => {
+		// ~2MB of JSON — far past ARG_MAX, so this can only work via stdin.
+		const big = 'x'.repeat(2_000_000);
+		const {json, status} = await runMcpc(
+			['call', 'Aggregator', 'echo', '--args', '-'],
+			{},
+			JSON.stringify({message: big}),
+		);
+		expect(status).toBe(0);
+		expect(json).toBe(big);
+	});
+
+	test('--args - with empty stdin fails clearly', async () => {
+		const {json, status} = await runMcpc(['call', 'Aggregator', 'echo', '--args', '-'], {}, '');
+		expect(status).toBe(1);
+		expect(json.error).toMatch(/stdin was empty/i);
+	});
+
+	test('--args - with invalid JSON on stdin fails clearly', async () => {
+		const {json, status} = await runMcpc(['call', 'Aggregator', 'echo', '--args', '-'], {}, 'not json');
+		expect(status).toBe(1);
+		expect(json.error).toMatch(/not valid json/i);
 	});
 });
 
