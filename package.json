@@ -1,6 +1,6 @@
 {
   "name": "call-mcp",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "A CLI client for the MCP servers configured in claude.ai, reusing the Claude Code token.",
   "license": "MIT",
   "author": "Adam Jones (domdomegg)",
