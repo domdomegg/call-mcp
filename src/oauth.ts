@@ -222,21 +222,21 @@ export class FileOAuthClientProvider implements OAuthClientProvider {
 				const error = url.searchParams.get('error');
 
 				if (error || !code) {
-					res.writeHead(400, {'content-type': 'text/html'});
-					res.end('<html><body>Authorization failed — you can close this tab and check the terminal.</body></html>');
+					res.writeHead(400, {'content-type': 'text/html; charset=utf-8'});
+					res.end('<!doctype html><meta charset="utf-8"><body>Authorization failed — you can close this tab and check the terminal.</body>');
 					reject(new Error(`Authorization for '${this.serverName}' failed: ${error ?? 'no code returned'}`));
 					return;
 				}
 
 				if (state !== this.oauthState) {
-					res.writeHead(400, {'content-type': 'text/html'});
-					res.end('<html><body>Authorization failed (state mismatch) — you can close this tab.</body></html>');
+					res.writeHead(400, {'content-type': 'text/html; charset=utf-8'});
+					res.end('<!doctype html><meta charset="utf-8"><body>Authorization failed (state mismatch) — you can close this tab.</body>');
 					reject(new Error(`Authorization for '${this.serverName}' failed: state mismatch.`));
 					return;
 				}
 
-				res.writeHead(200, {'content-type': 'text/html'});
-				res.end('<html><body>Authorized — you can close this tab and return to the terminal.</body></html>');
+				res.writeHead(200, {'content-type': 'text/html; charset=utf-8'});
+				res.end('<!doctype html><meta charset="utf-8"><body>Authorized — you can close this tab and return to the terminal.</body>');
 				resolve(code);
 			});
 		});
