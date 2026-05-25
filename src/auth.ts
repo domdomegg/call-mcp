@@ -1,6 +1,6 @@
 import {execFile} from 'node:child_process';
 import {readFile} from 'node:fs/promises';
-import {homedir} from 'node:os';
+import {homedir, userInfo} from 'node:os';
 import {join} from 'node:path';
 import {promisify} from 'node:util';
 
@@ -85,17 +85,41 @@ async function readStoredOauth(): Promise<ClaudeAiOauth | null> {
 }
 
 async function readKeychain(): Promise<ClaudeAiOauth | null> {
+	// Multiple Keychain items can share the "Claude Code-credentials" service:
+	// newer Claude Code versions key the item on the OS username, older ones on
+	// the email address, and a stale item can linger holding only an `mcpOAuth`
+	// blob (no `claudeAiOauth`). `security find-generic-password` without `-a`
+	// returns whichever item it finds first, so probe the username-keyed item
+	// first and accept the first blob that actually contains `claudeAiOauth`.
+	const accountFilters: string[][] = [];
 	try {
-		const {stdout} = await execFileAsync('security', [
-			'find-generic-password',
-			'-s',
-			KEYCHAIN_SERVICE,
-			'-w',
-		]);
-		return parseOauthBlob(stdout.trim());
+		accountFilters.push(['-a', userInfo().username]);
 	} catch {
-		return null;
+		// userInfo() can throw when the user has no passwd entry; skip the filter.
 	}
+
+	accountFilters.push([]);
+
+	for (const extra of accountFilters) {
+		try {
+			// eslint-disable-next-line no-await-in-loop
+			const {stdout} = await execFileAsync('security', [
+				'find-generic-password',
+				'-s',
+				KEYCHAIN_SERVICE,
+				...extra,
+				'-w',
+			]);
+			const oauth = parseOauthBlob(stdout.trim());
+			if (oauth) {
+				return oauth;
+			}
+		} catch {
+			// Item not found under this filter — try the next one.
+		}
+	}
+
+	return null;
 }
 
 async function readCredentialsFile(): Promise<ClaudeAiOauth | null> {
