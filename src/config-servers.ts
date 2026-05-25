@@ -6,7 +6,8 @@ import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {getDefaultEnvironment, StdioClientTransport} from '@modelcontextprotocol/sdk/client/stdio.js';
 import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type {Transport} from '@modelcontextprotocol/sdk/shared/transport.js';
-import {FileOAuthClientProvider, oauthCacheDir, type OAuthConfig} from './oauth.js';
+import {z} from 'zod';
+import {FileOAuthClientProvider, oauthCacheDir} from './oauth.js';
 
 /** Environment variable that overrides the servers config file location. */
 export const SERVERS_CONFIG_FILE_ENV = 'CALL_MCP_SERVERS_FILE';
@@ -14,21 +15,56 @@ export const SERVERS_CONFIG_FILE_ENV = 'CALL_MCP_SERVERS_FILE';
 /** The servers config file exists but cannot be parsed or is invalid. */
 export class ServersConfigError extends Error {}
 
-export type ServerConfig = {
-	type: 'http' | 'stdio';
-	/** http: the server URL (MCP Streamable HTTP). */
-	url?: string;
-	/** http: extra request headers, e.g. an Authorization header. */
-	headers?: Record<string, string>;
-	/** http: optional OAuth settings (static client credentials, scope) for servers that need them. */
-	oauth?: OAuthConfig;
-	/** stdio: the executable to spawn. */
-	command?: string;
-	/** stdio: arguments for the executable. */
-	args?: string[];
-	/** stdio: extra environment variables for the spawned process. */
-	env?: Record<string, string>;
-};
+/**
+ * One server entry in the config file. The transport-specific rules (http needs
+ * a url, stdio needs a command, the legacy sse transport is rejected) are
+ * enforced here too, with messages phrased to follow `Server "<name>" in <path> …`.
+ */
+const serverConfigSchema = z
+	.object({
+		type: z.string().optional(),
+		// http
+		url: z.string().optional(),
+		headers: z.record(z.string(), z.string()).optional(),
+		oauth: z
+			.object({
+				client_id: z.string().optional(),
+				client_secret: z.string().optional(),
+				scope: z.string().optional(),
+			})
+			.optional(),
+		// stdio
+		command: z.string().optional(),
+		args: z.array(z.string()).optional(),
+		env: z.record(z.string(), z.string()).optional(),
+	})
+	.superRefine((config, ctx) => {
+		if (config.type === 'sse') {
+			ctx.addIssue({code: 'custom', message: 'uses the legacy "sse" transport, which call-mcp does not support. Use an MCP Streamable HTTP server (type "http") or a stdio server instead.'});
+			return;
+		}
+
+		const type = config.type ?? (config.url ? 'http' : 'stdio');
+		if (type !== 'http' && type !== 'stdio') {
+			ctx.addIssue({code: 'custom', message: `has unsupported type ${JSON.stringify(config.type)} (supported: "http", "stdio").`});
+			return;
+		}
+
+		if (type === 'http' && !config.url) {
+			ctx.addIssue({code: 'custom', message: 'is missing "url".'});
+		}
+
+		if (type === 'stdio' && !config.command) {
+			ctx.addIssue({code: 'custom', message: 'is missing "command".'});
+		}
+	});
+
+const serversFileSchema = z.object({
+	mcpServers: z.record(z.string(), serverConfigSchema),
+});
+
+/** A server's config block, with `type` resolved to a concrete transport. */
+export type ServerConfig = z.infer<typeof serverConfigSchema> & {type: 'http' | 'stdio'};
 
 export type ConfiguredServer = {
 	/** The server's name in the config file (also used as its id). */
@@ -82,49 +118,37 @@ export function parseConfiguredServers(raw: string, path: string): ConfiguredSer
 		throw new ServersConfigError(`Could not parse the servers config ${path}: ${(err as Error).message}`);
 	}
 
-	const block = (parsed as {mcpServers?: unknown})?.mcpServers;
-	if (typeof block !== 'object' || block === null || Array.isArray(block)) {
-		throw new ServersConfigError(`${path} must contain an "mcpServers" object (the same shape as Claude Code's MCP config).`);
+	const result = serversFileSchema.safeParse(parsed);
+	if (!result.success) {
+		throw new ServersConfigError(formatConfigIssue(result.error, path));
 	}
 
-	return Object.entries(block as Record<string, unknown>).map(([name, config]) => parseServer(name, config, path));
+	return Object.entries(result.data.mcpServers).map(([name, config]): ConfiguredServer => {
+		// Validated by the schema above, so the inferred fallback is always concrete.
+		const type = (config.type ?? (config.url ? 'http' : 'stdio')) as ServerConfig['type'];
+		const commandSummary = [config.command, ...(config.args ?? [])].filter(Boolean).join(' ');
+
+		return {
+			id: name,
+			display_name: name,
+			url: config.url ?? commandSummary,
+			source: 'config',
+			configPath: path,
+			config: {...config, type},
+		};
+	});
 }
 
-function parseServer(name: string, raw: unknown, path: string): ConfiguredServer {
-	if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
-		throw new ServersConfigError(`Server "${name}" in ${path} must be an object.`);
+/** Turns the first schema issue into a single friendly error message. */
+function formatConfigIssue(error: z.ZodError, path: string): string {
+	const issue = error.issues[0]!;
+	const [, serverName, ...fieldPath] = issue.path;
+	if (serverName === undefined) {
+		return `${path} must contain an "mcpServers" object (the same shape as Claude Code's MCP config).`;
 	}
 
-	const record = raw as Record<string, unknown>;
-	const type = record.type ?? (record.url ? 'http' : 'stdio');
-
-	if (type === 'sse') {
-		throw new ServersConfigError(`Server "${name}" in ${path} uses the legacy "sse" transport, which call-mcp does not support. Use an MCP Streamable HTTP server (type "http") or a stdio server instead.`);
-	}
-
-	if (type !== 'http' && type !== 'stdio') {
-		throw new ServersConfigError(`Server "${name}" in ${path} has unsupported type ${JSON.stringify(type)} (supported: "http", "stdio").`);
-	}
-
-	if (type === 'http' && typeof record.url !== 'string') {
-		throw new ServersConfigError(`Server "${name}" in ${path} is missing "url".`);
-	}
-
-	if (type === 'stdio' && typeof record.command !== 'string') {
-		throw new ServersConfigError(`Server "${name}" in ${path} is missing "command".`);
-	}
-
-	const config = {...record, type} as ServerConfig;
-	const commandSummary = [config.command, ...(config.args ?? [])].filter(Boolean).join(' ');
-
-	return {
-		id: name,
-		display_name: name,
-		url: config.url ?? commandSummary,
-		source: 'config',
-		configPath: path,
-		config,
-	};
+	const field = fieldPath.length > 0 ? ` ${fieldPath.map(String).join('.')}:` : '';
+	return `Server "${String(serverName)}" in ${path}${field} ${issue.message}`;
 }
 
 /**

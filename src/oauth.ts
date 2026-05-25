@@ -16,10 +16,10 @@ const AUTHORIZATION_TIMEOUT_MS = 180_000;
 /** Optional per-server OAuth settings from the servers config. */
 export type OAuthConfig = {
 	/** Static client credentials, for servers that don't support dynamic client registration. */
-	client_id?: string;
-	client_secret?: string;
+	client_id?: string | undefined;
+	client_secret?: string | undefined;
 	/** Scope to request during authorization. */
-	scope?: string;
+	scope?: string | undefined;
 };
 
 type StoredAuth = {

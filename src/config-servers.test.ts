@@ -89,7 +89,7 @@ describe('parseConfiguredServers', () => {
 	test('rejects a server entry that is not an object', () => {
 		expect(() => parseConfiguredServers(JSON.stringify({
 			mcpServers: {broken: 'not-an-object'},
-		}), path)).toThrowError(/must be an object/);
+		}), path)).toThrowError(/expected object/);
 	});
 
 	test('rejects a file without an mcpServers object', () => {
