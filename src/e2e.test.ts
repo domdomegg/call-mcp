@@ -209,6 +209,8 @@ async function runMcpc(args: string[], envOverrides: Record<string, string> = {}
 					CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oat01-e2e-fixture',
 					TEST_ONLY_API_URL_OVERRIDE: baseUrl,
 					TEST_ONLY_PROXY_URL_OVERRIDE: baseUrl,
+					// Isolate from any servers config the developer running the tests has.
+					CALL_MCP_SERVERS_FILE: '/nonexistent/call-mcp-servers.json',
 					...envOverrides,
 				},
 			},

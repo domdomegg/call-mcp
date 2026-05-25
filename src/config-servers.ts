@@ -44,15 +44,16 @@ export type ConfiguredServer = {
 
 /** Candidate config file locations; the first existing file wins. */
 export function serversConfigPaths(): string[] {
-	const paths: string[] = [];
 	const fromEnv = process.env[SERVERS_CONFIG_FILE_ENV]?.trim();
 	if (fromEnv) {
-		paths.push(fromEnv);
+		// An explicit override is authoritative — no falling back to the default
+		// location (this also lets tests and scripts isolate themselves from a
+		// user's real config).
+		return [fromEnv];
 	}
 
 	const configHome = process.env.XDG_CONFIG_HOME?.trim() || join(homedir(), '.config');
-	paths.push(join(configHome, 'call-mcp', 'servers.json'));
-	return paths;
+	return [join(configHome, 'call-mcp', 'servers.json')];
 }
 
 /** Loads servers from the servers config file, or returns [] if no config file exists. */

@@ -126,9 +126,9 @@ describe('expandEnv', () => {
 });
 
 describe('serversConfigPaths', () => {
-	test('prefers CALL_MCP_SERVERS_FILE when set', () => {
+	test('uses only CALL_MCP_SERVERS_FILE when set', () => {
 		vi.stubEnv('CALL_MCP_SERVERS_FILE', '/somewhere/custom.json');
-		expect(serversConfigPaths()[0]).toBe('/somewhere/custom.json');
+		expect(serversConfigPaths()).toEqual(['/somewhere/custom.json']);
 	});
 
 	test('falls back to the XDG config location', () => {

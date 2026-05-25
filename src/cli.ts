@@ -62,10 +62,9 @@ OUTPUT
                           structuredContent, isError }
 
 CONFIGURING SERVERS
-  Define your servers in a JSON config file. call-mcp reads the first of these
-  that exists:
-    1. $CALL_MCP_SERVERS_FILE (if set)
-    2. $XDG_CONFIG_HOME/call-mcp/servers.json (default ~/.config/call-mcp/servers.json)
+  Define your servers in a JSON config file at
+    $XDG_CONFIG_HOME/call-mcp/servers.json (default ~/.config/call-mcp/servers.json),
+  or set $CALL_MCP_SERVERS_FILE to use a specific file instead.
   The file uses the same "mcpServers" shape as Claude Code's MCP config, so
   blocks can be copy-pasted between the two:
     {
