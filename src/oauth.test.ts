@@ -86,12 +86,14 @@ describe('FileOAuthClientProvider authorization callback', () => {
 		const provider = await FileOAuthClientProvider.create('homelab', 'https://mcp.example.com/mcp');
 		const redirect = new URL(provider.redirectUrl);
 
-		const waiting = provider.waitForAuthorizationCode();
+		// Attach the rejection expectation before triggering the callback, so the
+		// rejection is always observed.
+		const waiting = expect(provider.waitForAuthorizationCode()).rejects.toThrowError(/state mismatch/);
 		redirect.searchParams.set('code', 'auth-code-789');
 		redirect.searchParams.set('state', 'wrong-state');
 		const res = await fetch(redirect);
 		expect(res.status).toBe(400);
 
-		await expect(waiting).rejects.toThrowError(/state mismatch/);
+		await waiting;
 	});
 });
