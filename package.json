@@ -1,7 +1,7 @@
 {
   "name": "call-mcp",
   "version": "1.1.0",
-  "description": "A CLI client for the MCP servers configured in claude.ai, reusing the Claude Code token.",
+  "description": "CLI for calling MCP servers — Streamable HTTP, stdio, or your claude.ai connectors (reusing the Claude Code login)",
   "license": "MIT",
   "author": "Adam Jones (domdomegg)",
   "repository": {
@@ -27,7 +27,8 @@
     "prepublishOnly": "npm run clean && npm run build"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0"
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@tsconfig/node-lts": "^22.0.2",

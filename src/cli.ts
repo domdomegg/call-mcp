@@ -1,28 +1,36 @@
 #!/usr/bin/env node
 import {parseArgs} from 'node:util';
-import {AuthError, getToken} from './auth.js';
+import {AuthError, getToken, type Token} from './auth.js';
 import {callTool, connect, listTools} from './client.js';
-import {DiscoveryError, listServers, resolveServer} from './discovery.js';
+import {
+	DiscoveryError, listServers, resolveServer, type McpServer,
+} from './discovery.js';
+import {
+	connectConfiguredServer, loadConfiguredServers, ServersConfigError, type ConfiguredServer,
+} from './config-servers.js';
 import {ConnectorAuthError} from './transport.js';
 
-const HELP = `call-mcp — a CLI client for your claude.ai-configured MCP servers
+const HELP = `call-mcp — a CLI for calling MCP servers
 
-call-mcp talks to the MCP servers ("connectors") you have set up in claude.ai. It
-reuses the Claude Code OAuth token, so there is no separate login.
+call-mcp talks to MCP servers you define in a small config file — over MCP
+Streamable HTTP or stdio — and to the connectors you have set up in claude.ai,
+reusing the Claude Code OAuth token so there is no separate login.
+See CONFIGURING SERVERS for the config file, and AUTH for the claude.ai side.
 
 USAGE
   call-mcp <command> [arguments] [options]
 
 COMMANDS
-  list                       List your claude.ai MCP servers.
+  list                       List your configured servers and claude.ai connectors.
   tools <server>             List the tools a server exposes.
   call  <server> <tool>      Call a tool on a server.
   help                       Show this help. (also: -h, --help)
 
 ARGUMENTS
-  <server>   A server id (mcpsrv_...) or display name. Display names are
-             matched case-insensitively; a unique name prefix also works,
-             e.g. 'Google Drive', 'google', or the full id.
+  <server>   A server name from your config file, a claude.ai connector's
+             display name, or a connector id (mcpsrv_...). Names are matched
+             case-insensitively; a unique prefix also works, e.g. 'homelab',
+             'Google Drive', or 'google'.
   <tool>     The exact tool name as shown by 'call-mcp tools <server>'.
 
 OPTIONS
@@ -42,13 +50,44 @@ OUTPUT
   object { "error": ... } and the process exits non-zero. Pretty-print with
   'call-mcp list | jq'.
 
-  list           default: [{ id, display_name, url }]
-                 --full:  raw /v1/mcp_servers objects
+  list           default: [{ id, display_name, url, source }]
+                          (source is "config" for servers from your config file,
+                          "claude.ai" for connectors)
+                 --full:  config servers include their (unexpanded) config;
+                          claude.ai entries are the raw /v1/mcp_servers objects
   tools <s>      default: { server, tools: [{ name, description }] }
                  --full:  tools include inputSchema, outputSchema, annotations
   call <s> <t>   default: the tool's structuredContent, or its text content
                  --full:  the complete MCP CallToolResult { content,
                           structuredContent, isError }
+
+CONFIGURING SERVERS
+  Define your servers in a JSON config file at
+    $XDG_CONFIG_HOME/call-mcp/servers.json (default ~/.config/call-mcp/servers.json),
+  or set $CALL_MCP_SERVERS_FILE to use a specific file instead.
+  The file uses the same "mcpServers" shape as Claude Code's MCP config, so
+  blocks can be copy-pasted between the two:
+    {
+      "mcpServers": {
+        "homelab":    { "type": "http",  "url": "https://mcp.example.com/mcp",
+                        "headers": { "Authorization": "Bearer \${MY_TOKEN}" } },
+        "everything": { "type": "stdio", "command": "npx",
+                        "args": ["-y", "@modelcontextprotocol/server-everything"] }
+      }
+    }
+  Notes:
+  - "http" is MCP Streamable HTTP. The legacy SSE transport is not supported.
+  - stdio servers are spawned per invocation and shut down afterwards. Fine for
+    request/response servers; not suitable for stateful ones (e.g. browser
+    automation sessions).
+  - \${VAR} placeholders in url/headers/command/args/env expand from the
+    environment when the server is contacted, so secrets stay out of the file
+    (and out of 'list --full', which shows the unexpanded config).
+  - Servers that require OAuth work out of the box: on first use call-mcp opens
+    your browser to authorize and caches tokens under ~/.config/call-mcp/auth/.
+  - Configured servers work without any Claude Code login when referenced by
+    their exact name; 'list' just skips claude.ai connectors (with a note on
+    stderr) if you aren't logged in.
 
 QUOTING
   --args takes a JSON string, and JSON uses double quotes — so wrap the whole
@@ -241,14 +280,75 @@ async function main(argv: string[]): Promise<number> {
 	}
 }
 
-async function cmdList(full: boolean): Promise<number> {
-	const token = await getToken();
-	const servers = await listServers(token);
-	if (full) {
-		return emit(servers);
+/**
+ * Resolves a server reference across configured servers and claude.ai
+ * connectors. An exact match on a configured server's name short-circuits
+ * before any claude.ai call, so configured servers work without a Claude Code
+ * login; if claude.ai discovery fails, resolution falls back to configured
+ * servers only.
+ */
+async function resolveRef(ref: string): Promise<{configured: ConfiguredServer} | {remote: McpServer; token: Token}> {
+	const configured = await loadConfiguredServers();
+	const exact = configured.filter((s) => s.id === ref || s.display_name.toLowerCase() === ref.toLowerCase());
+	if (exact.length === 1) {
+		return {configured: exact[0]!};
 	}
 
-	return emit(servers.map((s) => ({id: s.id, display_name: s.display_name, url: s.url})));
+	let token: Token;
+	let connectors: McpServer[];
+	try {
+		token = await getToken();
+		connectors = await listServers(token);
+	} catch (err) {
+		if ((err instanceof AuthError || err instanceof DiscoveryError) && configured.length > 0) {
+			return {configured: resolveServer(configured, ref)};
+		}
+
+		throw err;
+	}
+
+	const resolved = resolveServer([...configured, ...connectors] as (McpServer | ConfiguredServer)[], ref);
+	if ('source' in resolved && resolved.source === 'config') {
+		return {configured: resolved};
+	}
+
+	return {remote: resolved as McpServer, token};
+}
+
+async function cmdList(full: boolean): Promise<number> {
+	const configured = await loadConfiguredServers();
+
+	let connectors: McpServer[] = [];
+	try {
+		const token = await getToken();
+		connectors = await listServers(token);
+	} catch (err) {
+		// claude.ai connectors are optional: if you have your own servers configured
+		// and aren't logged in (or discovery is unreachable), still list yours.
+		if (!(err instanceof AuthError || err instanceof DiscoveryError) || configured.length === 0) {
+			throw err;
+		}
+
+		process.stderr.write(`note: skipping claude.ai connectors: ${(err as Error).message.split('\n')[0]}\n`);
+	}
+
+	if (full) {
+		return emit([
+			...configured.map((s) => ({
+				id: s.id, display_name: s.display_name, url: s.url, source: s.source, config_path: s.configPath, config: s.config,
+			})),
+			...connectors.map((s) => ({...s, source: 'claude.ai'})),
+		]);
+	}
+
+	return emit([
+		...configured.map((s) => ({
+			id: s.id, display_name: s.display_name, url: s.url, source: s.source,
+		})),
+		...connectors.map((s) => ({
+			id: s.id, display_name: s.display_name, url: s.url, source: 'claude.ai',
+		})),
+	]);
 }
 
 async function cmdTools(ref: string | undefined, full: boolean): Promise<number> {
@@ -258,10 +358,12 @@ async function cmdTools(ref: string | undefined, full: boolean): Promise<number>
 		});
 	}
 
-	const token = await getToken();
-	const server = resolveServer(await listServers(token), ref);
+	const target = await resolveRef(ref);
+	const server = 'configured' in target ? target.configured : target.remote;
 
-	const client = await connect(server.id, token.accessToken);
+	const client = 'configured' in target
+		? await connectConfiguredServer(target.configured)
+		: await connect(target.remote.id, target.token.accessToken);
 	try {
 		const tools = await listTools(client);
 		if (full) {
@@ -329,10 +431,11 @@ async function cmdCall(
 		args = parsedArgs as Record<string, unknown>;
 	}
 
-	const token = await getToken();
-	const server = resolveServer(await listServers(token), ref);
+	const target = await resolveRef(ref);
 
-	const client = await connect(server.id, token.accessToken);
+	const client = 'configured' in target
+		? await connectConfiguredServer(target.configured)
+		: await connect(target.remote.id, target.token.accessToken);
 	try {
 		const result = (await callTool(client, toolName, args)) as {
 			content?: {type: string; text?: string}[];
@@ -380,6 +483,10 @@ async function handleError(err: unknown): Promise<number> {
 
 	if (err instanceof AuthError) {
 		return fail(err.message, {hint: 'See `call-mcp --help` (AUTH section).'});
+	}
+
+	if (err instanceof ServersConfigError) {
+		return fail(err.message, {hint: 'See `call-mcp --help` (CONFIGURING SERVERS section) for the expected config shape.'});
 	}
 
 	if (err instanceof DiscoveryError) {

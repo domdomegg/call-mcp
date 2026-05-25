@@ -209,6 +209,8 @@ async function runMcpc(args: string[], envOverrides: Record<string, string> = {}
 					CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oat01-e2e-fixture',
 					TEST_ONLY_API_URL_OVERRIDE: baseUrl,
 					TEST_ONLY_PROXY_URL_OVERRIDE: baseUrl,
+					// Isolate from any servers config the developer running the tests has.
+					CALL_MCP_SERVERS_FILE: '/nonexistent/call-mcp-servers.json',
 					...envOverrides,
 				},
 			},
@@ -239,8 +241,12 @@ describe('list', () => {
 		const {json, status} = await runMcpc(['list']);
 		expect(status).toBe(0);
 		expect(json).toEqual([
-			{id: 'mcpsrv_aggregator', display_name: 'Aggregator', url: 'https://mcp.example.com/mcp'},
-			{id: 'mcpsrv_needsauth', display_name: 'Needs Auth', url: 'https://needsauth.example.com/mcp'},
+			{
+				id: 'mcpsrv_aggregator', display_name: 'Aggregator', url: 'https://mcp.example.com/mcp', source: 'claude.ai',
+			},
+			{
+				id: 'mcpsrv_needsauth', display_name: 'Needs Auth', url: 'https://needsauth.example.com/mcp', source: 'claude.ai',
+			},
 		]);
 	});
 
@@ -398,7 +404,7 @@ describe('help', () => {
 	test('`call-mcp help` prints usage and exits 0', async () => {
 		const {stdout, status} = await runMcpc(['help']);
 		expect(status).toBe(0);
-		expect(stdout).toMatch(/^call-mcp — a CLI client/);
+		expect(stdout).toMatch(/^call-mcp — a CLI for calling MCP servers/);
 		expect(stdout).toContain('USAGE');
 		expect(stdout).toContain('EXAMPLES');
 	});
@@ -406,6 +412,6 @@ describe('help', () => {
 	test('--help is equivalent to help', async () => {
 		const {stdout, status} = await runMcpc(['--help']);
 		expect(status).toBe(0);
-		expect(stdout).toMatch(/^call-mcp — a CLI client/);
+		expect(stdout).toMatch(/^call-mcp — a CLI for calling MCP servers/);
 	});
 });
