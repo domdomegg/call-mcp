@@ -1,7 +1,8 @@
 # call-mcp
 
-A CLI client for the MCP servers you've configured in claude.ai (your "org
-connectors"). It reuses the Claude Code OAuth token — no separate login.
+A CLI for calling MCP servers: define servers in a small config file (MCP
+Streamable HTTP or stdio), and/or use the connectors you've set up in claude.ai
+(those reuse the Claude Code OAuth token — no separate login).
 
 Every command prints JSON to stdout, on success and on error alike, so output
 is always safe to pipe into `jq` or parse in a script.
@@ -12,20 +13,22 @@ is always safe to pipe into `jq` or parse in a script.
 npm install -g call-mcp
 ```
 
-Requires Node 20+. Works on macOS, Linux, and Windows — anywhere Claude Code
-has stored a token (or where `CLAUDE_CODE_OAUTH_TOKEN` is set).
+Requires Node 20+. Works on macOS, Linux, and Windows. Servers from your own
+config need no other setup; claude.ai connectors need a Claude Code login (or
+`CLAUDE_CODE_OAUTH_TOKEN`).
 
 ## Usage
 
 ```
-call-mcp list                                List your claude.ai MCP servers
+call-mcp list                                List your servers and claude.ai connectors
 call-mcp tools <server>                      List the tools a server exposes
 call-mcp call <server> <tool> [--args JSON]  Call a tool
 call-mcp help                                Full help with examples
 ```
 
-`<server>` is a server id (`mcpsrv_...`) or a display name (a unique
-case-insensitive prefix also works, e.g. `google`).
+`<server>` is a server name from your config file, a claude.ai connector's
+display name, or a connector id (`mcpsrv_...`) — a unique case-insensitive
+prefix also works, e.g. `google`.
 
 `--args <json>` passes a JSON object of arguments to `call`.
 
@@ -33,6 +36,41 @@ case-insensitive prefix also works, e.g. `google`).
 objects; `--full` adds tool input/output schemas, raw server fields, and the
 complete tool-call result envelope. Keep it slim and search first — fetch a
 full schema only for the tool you actually need.
+
+## Configuring servers
+
+Define your servers in `~/.config/call-mcp/servers.json` (or point
+`CALL_MCP_SERVERS_FILE` at a file), using the same `mcpServers` shape as Claude
+Code's MCP config — blocks copy-paste between the two:
+
+```json
+{
+  "mcpServers": {
+    "homelab": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "headers": { "Authorization": "Bearer ${MY_TOKEN}" }
+    },
+    "everything": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-everything"]
+    }
+  }
+}
+```
+
+- `"http"` is MCP Streamable HTTP; `"stdio"` spawns the command per invocation
+  and shuts it down afterwards. The legacy SSE transport is not supported.
+- `${VAR}` placeholders expand from the environment at call time, so secrets
+  stay out of the file (and out of `list --full`).
+- Per-server OAuth flows aren't supported yet — use a static `Authorization`
+  header, or set those servers up as claude.ai connectors instead.
+- Configured servers need no claude.ai or Claude Code login.
+
+Servers show up in `call-mcp list` with `"source": "config"`, claude.ai
+connectors with `"source": "claude.ai"`; `tools` and `call` take either by
+name. See the `CONFIGURING SERVERS` section of `call-mcp help` for details.
 
 ### Examples
 
@@ -53,38 +91,6 @@ call-mcp tools Aggregator --full | jq '.tools[]
 
 Run `call-mcp help` for the full set, including cross-server tool search and
 error-handling recipes.
-
-## Local servers
-
-Besides claude.ai connectors, call-mcp can talk directly to MCP servers you
-define yourself — over MCP Streamable HTTP or stdio. Put a config file at
-`~/.config/call-mcp/servers.json` (or point `CALL_MCP_SERVERS_FILE` at one),
-using the same `mcpServers` shape as Claude Code's MCP config:
-
-```json
-{
-  "mcpServers": {
-    "homelab": {
-      "type": "http",
-      "url": "https://mcp.example.com/mcp",
-      "headers": { "Authorization": "Bearer ${MY_TOKEN}" }
-    },
-    "everything": {
-      "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-everything"]
-    }
-  }
-}
-```
-
-Local servers show up in `call-mcp list` with `"source": "local"`, and `tools`
-/ `call` work on them by name — no Claude Code login needed when you reference
-them by their exact name. `${VAR}` placeholders expand from the environment at
-call time, so secrets stay out of the file. stdio servers are spawned per
-invocation; the legacy SSE transport and per-server OAuth flows are not
-supported (use a static `Authorization` header, or keep those as claude.ai
-connectors). See the `LOCAL SERVERS` section of `call-mcp help` for details.
 
 ## How it works
 

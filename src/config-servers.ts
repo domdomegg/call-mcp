@@ -6,13 +6,13 @@ import {getDefaultEnvironment, StdioClientTransport} from '@modelcontextprotocol
 import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type {Transport} from '@modelcontextprotocol/sdk/shared/transport.js';
 
-/** Environment variable that overrides the local servers config file location. */
-export const LOCAL_SERVERS_FILE_ENV = 'CALL_MCP_SERVERS_FILE';
+/** Environment variable that overrides the servers config file location. */
+export const SERVERS_CONFIG_FILE_ENV = 'CALL_MCP_SERVERS_FILE';
 
-/** The local servers config file exists but cannot be parsed or is invalid. */
-export class LocalConfigError extends Error {}
+/** The servers config file exists but cannot be parsed or is invalid. */
+export class ServersConfigError extends Error {}
 
-export type LocalServerConfig = {
+export type ServerConfig = {
 	type: 'http' | 'stdio';
 	/** http: the server URL (MCP Streamable HTTP). */
 	url?: string;
@@ -26,22 +26,22 @@ export type LocalServerConfig = {
 	env?: Record<string, string>;
 };
 
-export type LocalServer = {
-	/** Stable identifier: `local:<name>`. */
+export type ConfiguredServer = {
+	/** The server's name in the config file (also used as its id). */
 	id: string;
 	display_name: string;
 	/** The URL for http servers, or the command line for stdio servers. */
 	url: string;
-	source: 'local';
+	source: 'config';
 	configPath: string;
 	/** The raw (unexpanded) config block — ${VAR} expansion happens at connect time. */
-	config: LocalServerConfig;
+	config: ServerConfig;
 };
 
 /** Candidate config file locations; the first existing file wins. */
-export function localConfigPaths(): string[] {
+export function serversConfigPaths(): string[] {
 	const paths: string[] = [];
-	const fromEnv = process.env[LOCAL_SERVERS_FILE_ENV]?.trim();
+	const fromEnv = process.env[SERVERS_CONFIG_FILE_ENV]?.trim();
 	if (fromEnv) {
 		paths.push(fromEnv);
 	}
@@ -51,9 +51,9 @@ export function localConfigPaths(): string[] {
 	return paths;
 }
 
-/** Loads servers from the local config file, or returns [] if no config file exists. */
-export async function loadLocalServers(): Promise<LocalServer[]> {
-	for (const path of localConfigPaths()) {
+/** Loads servers from the servers config file, or returns [] if no config file exists. */
+export async function loadConfiguredServers(): Promise<ConfiguredServer[]> {
+	for (const path of serversConfigPaths()) {
 		let raw: string;
 		try {
 			// eslint-disable-next-line no-await-in-loop
@@ -62,61 +62,61 @@ export async function loadLocalServers(): Promise<LocalServer[]> {
 			continue; // No file at this location — try the next candidate.
 		}
 
-		return parseLocalServers(raw, path);
+		return parseConfiguredServers(raw, path);
 	}
 
 	return [];
 }
 
 /** Parses and validates a servers config file. Exported for testing. */
-export function parseLocalServers(raw: string, path: string): LocalServer[] {
+export function parseConfiguredServers(raw: string, path: string): ConfiguredServer[] {
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(raw);
 	} catch (err) {
-		throw new LocalConfigError(`Could not parse local MCP server config ${path}: ${(err as Error).message}`);
+		throw new ServersConfigError(`Could not parse the servers config ${path}: ${(err as Error).message}`);
 	}
 
 	const block = (parsed as {mcpServers?: unknown})?.mcpServers;
 	if (typeof block !== 'object' || block === null || Array.isArray(block)) {
-		throw new LocalConfigError(`${path} must contain an "mcpServers" object (the same shape as Claude Code's MCP config).`);
+		throw new ServersConfigError(`${path} must contain an "mcpServers" object (the same shape as Claude Code's MCP config).`);
 	}
 
 	return Object.entries(block as Record<string, unknown>).map(([name, config]) => parseServer(name, config, path));
 }
 
-function parseServer(name: string, raw: unknown, path: string): LocalServer {
+function parseServer(name: string, raw: unknown, path: string): ConfiguredServer {
 	if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
-		throw new LocalConfigError(`Server "${name}" in ${path} must be an object.`);
+		throw new ServersConfigError(`Server "${name}" in ${path} must be an object.`);
 	}
 
 	const record = raw as Record<string, unknown>;
 	const type = record.type ?? (record.url ? 'http' : 'stdio');
 
 	if (type === 'sse') {
-		throw new LocalConfigError(`Server "${name}" in ${path} uses the legacy "sse" transport, which call-mcp does not support. Use an MCP Streamable HTTP server (type "http") or a stdio server instead.`);
+		throw new ServersConfigError(`Server "${name}" in ${path} uses the legacy "sse" transport, which call-mcp does not support. Use an MCP Streamable HTTP server (type "http") or a stdio server instead.`);
 	}
 
 	if (type !== 'http' && type !== 'stdio') {
-		throw new LocalConfigError(`Server "${name}" in ${path} has unsupported type ${JSON.stringify(type)} (supported: "http", "stdio").`);
+		throw new ServersConfigError(`Server "${name}" in ${path} has unsupported type ${JSON.stringify(type)} (supported: "http", "stdio").`);
 	}
 
 	if (type === 'http' && typeof record.url !== 'string') {
-		throw new LocalConfigError(`Server "${name}" in ${path} is missing "url".`);
+		throw new ServersConfigError(`Server "${name}" in ${path} is missing "url".`);
 	}
 
 	if (type === 'stdio' && typeof record.command !== 'string') {
-		throw new LocalConfigError(`Server "${name}" in ${path} is missing "command".`);
+		throw new ServersConfigError(`Server "${name}" in ${path} is missing "command".`);
 	}
 
-	const config = {...record, type} as LocalServerConfig;
+	const config = {...record, type} as ServerConfig;
 	const commandSummary = [config.command, ...(config.args ?? [])].filter(Boolean).join(' ');
 
 	return {
-		id: `local:${name}`,
+		id: name,
 		display_name: name,
 		url: config.url ?? commandSummary,
-		source: 'local',
+		source: 'config',
 		configPath: path,
 		config,
 	};
@@ -145,14 +145,14 @@ export function expandEnv<T>(value: T): T {
 }
 
 /**
- * Opens an initialized MCP session to a server from the local config.
+ * Opens an initialized MCP session to a server from the servers config.
  *
  * http servers use the MCP Streamable HTTP transport with any configured
  * headers; stdio servers are spawned as a child process for the duration of
  * this invocation (the SDK's default minimal environment plus any configured
  * env vars).
  */
-export async function connectLocal(server: LocalServer): Promise<Client> {
+export async function connectConfiguredServer(server: ConfiguredServer): Promise<Client> {
 	const config = expandEnv(server.config);
 	// The cast is needed because the SDK's own client transports don't satisfy its
 	// Transport interface under exactOptionalPropertyTypes (sessionId is typed
@@ -178,9 +178,9 @@ export async function connectLocal(server: LocalServer): Promise<Client> {
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
 		const authHint = /\b(401|403|unauthorized|forbidden)\b/i.test(message)
-			? ' The server may require authentication: add a "headers" block with an Authorization header in the servers config (OAuth flows are not supported yet), or keep it as a claude.ai connector.'
+			? ' The server may require authentication: add a "headers" block with an Authorization header in the servers config (OAuth flows are not supported yet).'
 			: '';
-		throw new Error(`Could not connect to local server '${server.display_name}': ${message}.${authHint}`);
+		throw new Error(`Could not connect to server '${server.display_name}': ${message}.${authHint}`);
 	}
 
 	return client;

@@ -17,7 +17,7 @@ const cliPath = join(here, '..', 'dist', 'cli.js');
 const envPlaceholder = (name: string) => `\${${name}}`;
 
 /**
- * End-to-end tests for locally-configured servers: spawn the real `call-mcp`
+ * End-to-end tests for configured servers: spawn the real `call-mcp`
  * binary with CALL_MCP_SERVERS_FILE pointing at a temp config, against
  * (a) a stdio fixture server spawned by the CLI itself, and (b) an in-process
  * MCP Streamable HTTP mock. No real account or network is needed.
@@ -92,7 +92,7 @@ beforeAll(async () => {
 		execFileSync('npm', ['run', 'build'], {cwd: join(here, '..'), stdio: 'inherit'});
 	}
 
-	tempDir = await mkdtemp(join(tmpdir(), 'call-mcp-local-e2e-'));
+	tempDir = await mkdtemp(join(tmpdir(), 'call-mcp-config-e2e-'));
 	const fixturePath = join(tempDir, 'stdio-fixture.mjs');
 	await writeFile(fixturePath, STDIO_FIXTURE);
 
@@ -216,7 +216,7 @@ afterAll(async () => {
 
 type RunResult = {stdout: string; stderr: string; status: number; json: any};
 
-/** Runs `call-mcp <args>` with the local servers config and parses its stdout as JSON. */
+/** Runs `call-mcp <args>` with the servers config and parses its stdout as JSON. */
 async function runCli(args: string[], envOverrides: Record<string, string> = {}): Promise<RunResult> {
 	return new Promise((resolve) => {
 		execFile(
@@ -254,33 +254,45 @@ async function runCli(args: string[], envOverrides: Record<string, string> = {})
 	});
 }
 
-describe('list with local servers', () => {
-	test('includes local servers with source: "local"', async () => {
+describe('list with configured servers', () => {
+	test('includes configured servers with source: "config"', async () => {
 		const {json, status} = await runCli(['list']);
 		expect(status).toBe(0);
 		expect(json).toContainEqual({
-			id: 'local:echo-http',
+			id: 'echo-http',
 			display_name: 'echo-http',
 			url: `${httpBaseUrl}/mcp`,
-			source: 'local',
+			source: 'config',
 		});
-		expect(json).toContainEqual(expect.objectContaining({id: 'local:echo-stdio', source: 'local'}));
+		expect(json).toContainEqual(expect.objectContaining({id: 'echo-stdio', source: 'config'}));
+	});
+
+	test('list still works without claude.ai access (connectors are skipped with a note)', async () => {
+		// Point discovery at a port that refuses connections: configured servers
+		// must still be listed, with a note about the skipped connectors on stderr.
+		const {json, status, stderr} = await runCli(['list'], {
+			TEST_ONLY_API_URL_OVERRIDE: 'http://127.0.0.1:9',
+		});
+		expect(status).toBe(0);
+		expect(json.map((s: {id: string}) => s.id).sort()).toEqual(['echo-http', 'echo-stdio']);
+		expect(json.every((s: {source: string}) => s.source === 'config')).toBe(true);
+		expect(stderr).toMatch(/skipping claude\.ai connectors/i);
 	});
 
 	test('--full includes the unexpanded config', async () => {
 		const {json, status} = await runCli(['list', '--full']);
 		expect(status).toBe(0);
-		const httpEntry = json.find((s: {id: string}) => s.id === 'local:echo-http');
+		const httpEntry = json.find((s: {id: string}) => s.id === 'echo-http');
 		// ${VAR} placeholders must not be expanded in list output, so secrets stay out of it.
 		expect(httpEntry.config.headers['X-Test-Auth']).toBe(`Bearer ${envPlaceholder('E2E_HTTP_TOKEN')}`);
 	});
 });
 
-describe('stdio local servers', () => {
+describe('stdio configured servers', () => {
 	test('tools lists the fixture tool', async () => {
 		const {json, status} = await runCli(['tools', 'echo-stdio']);
 		expect(status).toBe(0);
-		expect(json.server).toEqual({id: 'local:echo-stdio', display_name: 'echo-stdio'});
+		expect(json.server).toEqual({id: 'echo-stdio', display_name: 'echo-stdio'});
 		expect(json.tools).toEqual([{name: 'echo', description: 'Echoes the message back.'}]);
 	});
 
@@ -304,7 +316,7 @@ describe('stdio local servers', () => {
 	});
 });
 
-describe('streamable http local servers', () => {
+describe('streamable http configured servers', () => {
 	test('tools lists the fixture tool', async () => {
 		const {json, status} = await runCli(['tools', 'echo-http']);
 		expect(status).toBe(0);
@@ -318,12 +330,12 @@ describe('streamable http local servers', () => {
 	});
 });
 
-describe('local config errors', () => {
+describe('servers config errors', () => {
 	test('the legacy sse transport is rejected with a clear error', async () => {
 		const {json, status} = await runCli(['list'], {CALL_MCP_SERVERS_FILE: sseConfigPath});
 		expect(status).toBe(1);
 		expect(json.error).toMatch(/sse.*not support/i);
-		expect(json.hint).toMatch(/LOCAL SERVERS/);
+		expect(json.hint).toMatch(/CONFIGURING SERVERS/);
 	});
 
 	test('a stdio server whose command does not exist fails with a JSON error, not a crash', async () => {
@@ -334,15 +346,15 @@ describe('local config errors', () => {
 		const {json, status, stderr} = await runCli(['tools', 'broken'], {CALL_MCP_SERVERS_FILE: brokenConfig});
 		expect(status).toBe(1);
 		expect(stderr).not.toMatch(/\n\s+at\s/); // No stack trace.
-		expect(json.error).toMatch(/could not connect to local server 'broken'/i);
+		expect(json.error).toMatch(/could not connect to server 'broken'/i);
 	});
 });
 
 describe('help', () => {
-	test('documents the LOCAL SERVERS config', async () => {
+	test('documents the CONFIGURING SERVERS config', async () => {
 		const {stdout, status} = await runCli(['help']);
 		expect(status).toBe(0);
-		expect(stdout).toContain('LOCAL SERVERS');
+		expect(stdout).toContain('CONFIGURING SERVERS');
 		expect(stdout).toContain('CALL_MCP_SERVERS_FILE');
 	});
 });

@@ -25,13 +25,18 @@ type McpServersResponse = {
 
 /** Lists the claude.ai-configured MCP servers ("org connectors") for the account. */
 export async function listServers(token: Token): Promise<McpServer[]> {
-	const res = await fetch(`${BASE_API_URL}/v1/mcp_servers?limit=1000`, {
-		headers: {
-			Authorization: `Bearer ${token.accessToken}`,
-			'anthropic-beta': MCP_SERVERS_BETA,
-			'anthropic-version': '2023-06-01',
-		},
-	});
+	let res: Response;
+	try {
+		res = await fetch(`${BASE_API_URL}/v1/mcp_servers?limit=1000`, {
+			headers: {
+				Authorization: `Bearer ${token.accessToken}`,
+				'anthropic-beta': MCP_SERVERS_BETA,
+				'anthropic-version': '2023-06-01',
+			},
+		});
+	} catch (err) {
+		throw new DiscoveryError(`Failed to list MCP servers: ${(err as Error).message}`);
+	}
 
 	const body = (await res.json().catch(() => null)) as McpServersResponse | null;
 	if (!res.ok) {
