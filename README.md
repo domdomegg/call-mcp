@@ -1,8 +1,9 @@
 # call-mcp
 
 A CLI for calling MCP servers: define servers in a small config file (MCP
-Streamable HTTP or stdio), and/or use the connectors you've set up in claude.ai
-(those reuse the Claude Code OAuth token — no separate login).
+Streamable HTTP or stdio, including OAuth-secured servers), and/or use the
+connectors you've set up in claude.ai (those reuse the Claude Code OAuth token
+— no separate login).
 
 Every command prints JSON to stdout, on success and on error alike, so output
 is always safe to pipe into `jq` or parse in a script.
@@ -94,6 +95,22 @@ error-handling recipes.
 
 ## How it works
 
+**Servers from your config file:**
+
+- **Transports**: MCP Streamable HTTP or stdio, via the official MCP SDK's
+  `Client`. stdio servers are spawned per invocation (with the SDK's default
+  minimal environment plus any configured `env`) and shut down afterwards.
+- **OAuth**: if an HTTP server demands authorization (401), call-mcp runs the
+  standard MCP OAuth flow — metadata discovery, dynamic client registration,
+  PKCE — opens your browser to approve, and receives the redirect on a loopback
+  listener. Tokens are cached per server under `~/.config/call-mcp/auth/`
+  (mode `0600`) and refreshed automatically when they expire; only a failed
+  refresh sends you back to the browser. Servers without dynamic registration
+  can set static `client_id`/`client_secret`/`scope` via an `oauth` block, and
+  a configured `Authorization` header always takes precedence over OAuth.
+
+**claude.ai connectors:**
+
 - **Auth**: reuses the Claude Code OAuth token, resolved the same way Claude
   Code stores it:
   1. `CLAUDE_CODE_OAUTH_TOKEN` env var, if set (any platform).
@@ -107,29 +124,27 @@ error-handling recipes.
   back; if the token has expired it tells you to run `claude` once to refresh
   it.
 - **Discovery**: `GET https://api.anthropic.com/v1/mcp_servers` lists your
-  configured servers.
-- **Tool calls**: each server is reached through the claude.ai MCP proxy at
+  connectors.
+- **Tool calls**: each connector is reached through the claude.ai MCP proxy at
   `https://mcp-proxy.anthropic.com/v1/mcp/{server_id}`, speaking MCP over
   Streamable HTTP. The proxy uses a client-supplied `X-Mcp-Client-Session-Id`
   rather than a server-issued session id, so call-mcp ships a small custom
   transport (`src/transport.ts`) on top of the official MCP SDK's `Client`.
-
-Currently this targets claude.ai-hosted connectors specifically — not
-local/stdio or arbitrary remote MCP servers.
-
-A connector can also need its own authorization (e.g. a Google login). When
-that happens call-mcp returns `{ "error": ..., "authUrl": ... }` — open that URL to
-(re-)connect the server in claude.ai settings.
+- A connector can also need its own authorization (e.g. a Google login). When
+  that happens call-mcp returns `{ "error": ..., "authUrl": ... }` — open that URL to
+  (re-)connect the server in claude.ai settings.
 
 ### Source layout
 
-| File               | Responsibility                                                   |
-| ------------------ | ---------------------------------------------------------------- |
-| `src/auth.ts`      | Resolve + validate the Claude Code token (env / Keychain / file) |
-| `src/discovery.ts` | List servers, resolve a user ref to a server                     |
-| `src/transport.ts` | MCP Streamable HTTP transport for the claude.ai proxy            |
-| `src/client.ts`    | Connect / list tools / call tool via the MCP SDK `Client`        |
-| `src/cli.ts`       | Argument parsing and command dispatch                            |
+| File                    | Responsibility                                                       |
+| ----------------------- | -------------------------------------------------------------------- |
+| `src/config-servers.ts` | Servers config: load + validate `servers.json`, connect (http/stdio) |
+| `src/oauth.ts`          | OAuth for configured servers: browser flow, loopback callback, token cache |
+| `src/auth.ts`           | Resolve + validate the Claude Code token (env / Keychain / file)     |
+| `src/discovery.ts`      | List claude.ai connectors, resolve a user ref to a server            |
+| `src/transport.ts`      | MCP Streamable HTTP transport for the claude.ai proxy                |
+| `src/client.ts`         | Connect / list tools / call tool via the MCP SDK `Client`            |
+| `src/cli.ts`            | Argument parsing and command dispatch                                |
 
 ## Contributing
 
