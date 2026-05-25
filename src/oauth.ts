@@ -245,7 +245,7 @@ export class FileOAuthClientProvider implements OAuthClientProvider {
 		// being awaited — e.g. something else probing the loopback port. That must
 		// never become an unhandled rejection; the real consumer still receives the
 		// rejection through waitForAuthorizationCode().
-		void this.authorizationCode.catch(() => { /* Surfaced via waitForAuthorizationCode. */ });
+		void this.authorizationCode.catch(() => {/* Surfaced via waitForAuthorizationCode. */});
 
 		await new Promise<void>((resolve) => {
 			this.callbackServer!.listen(0, '127.0.0.1', resolve);
