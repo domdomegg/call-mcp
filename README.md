@@ -64,8 +64,8 @@ Code's MCP config — blocks copy-paste between the two:
   and shuts it down afterwards. The legacy SSE transport is not supported.
 - `${VAR}` placeholders expand from the environment at call time, so secrets
   stay out of the file (and out of `list --full`).
-- Per-server OAuth flows aren't supported yet — use a static `Authorization`
-  header, or set those servers up as claude.ai connectors instead.
+- Servers that require OAuth work out of the box: on first use call-mcp opens
+  your browser to authorize and caches tokens under `~/.config/call-mcp/auth/`.
 - Configured servers need no claude.ai or Claude Code login.
 
 Servers show up in `call-mcp list` with `"source": "config"`, claude.ai

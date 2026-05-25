@@ -84,8 +84,8 @@ CONFIGURING SERVERS
   - \${VAR} placeholders in url/headers/command/args/env expand from the
     environment when the server is contacted, so secrets stay out of the file
     (and out of 'list --full', which shows the unexpanded config).
-  - Servers that need their own OAuth flow aren't supported yet — use a static
-    Authorization header, or set them up as claude.ai connectors instead.
+  - Servers that require OAuth work out of the box: on first use call-mcp opens
+    your browser to authorize and caches tokens under ~/.config/call-mcp/auth/.
   - Configured servers work without any Claude Code login when referenced by
     their exact name; 'list' just skips claude.ai connectors (with a note on
     stderr) if you aren't logged in.

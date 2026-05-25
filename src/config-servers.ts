@@ -1,10 +1,12 @@
 import {readFile} from 'node:fs/promises';
 import {homedir} from 'node:os';
 import {join} from 'node:path';
+import {UnauthorizedError} from '@modelcontextprotocol/sdk/client/auth.js';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {getDefaultEnvironment, StdioClientTransport} from '@modelcontextprotocol/sdk/client/stdio.js';
 import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type {Transport} from '@modelcontextprotocol/sdk/shared/transport.js';
+import {FileOAuthClientProvider, oauthCacheDir, type OAuthConfig} from './oauth.js';
 
 /** Environment variable that overrides the servers config file location. */
 export const SERVERS_CONFIG_FILE_ENV = 'CALL_MCP_SERVERS_FILE';
@@ -18,6 +20,8 @@ export type ServerConfig = {
 	url?: string;
 	/** http: extra request headers, e.g. an Authorization header. */
 	headers?: Record<string, string>;
+	/** http: optional OAuth settings (static client credentials, scope) for servers that need them. */
+	oauth?: OAuthConfig;
 	/** stdio: the executable to spawn. */
 	command?: string;
 	/** stdio: arguments for the executable. */
@@ -148,40 +152,78 @@ export function expandEnv<T>(value: T): T {
  * Opens an initialized MCP session to a server from the servers config.
  *
  * http servers use the MCP Streamable HTTP transport with any configured
- * headers; stdio servers are spawned as a child process for the duration of
- * this invocation (the SDK's default minimal environment plus any configured
- * env vars).
+ * headers; if a server demands OAuth (401), the browser-based authorization
+ * flow runs and tokens are cached for next time. stdio servers are spawned as
+ * a child process for the duration of this invocation (the SDK's default
+ * minimal environment plus any configured env vars).
  */
 export async function connectConfiguredServer(server: ConfiguredServer): Promise<Client> {
 	const config = expandEnv(server.config);
-	// The cast is needed because the SDK's own client transports don't satisfy its
-	// Transport interface under exactOptionalPropertyTypes (sessionId is typed
-	// `string | undefined` rather than optional).
-	const transport = (config.type === 'http'
-		? new StreamableHTTPClientTransport(
-			new URL(config.url!),
-			config.headers ? {requestInit: {headers: config.headers}} : {},
-		)
-		: new StdioClientTransport({
-			command: config.command!,
-			args: config.args ?? [],
-			env: {...getDefaultEnvironment(), ...config.env},
-		})) as Transport;
-
-	const client = new Client(
-		{name: 'call-mcp', version: '0.1.0'},
-		{capabilities: {}},
-	);
 
 	try {
-		await client.connect(transport);
+		return config.type === 'http'
+			? await connectHttp(server, config)
+			: await connectStdio(config);
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
 		const authHint = /\b(401|403|unauthorized|forbidden)\b/i.test(message)
-			? ' The server may require authentication: add a "headers" block with an Authorization header in the servers config (OAuth flows are not supported yet).'
+			? ` If the server uses OAuth, retry and approve the authorization in your browser (cached under ${oauthCacheDir()}); for static credentials, add an Authorization header under "headers" in the servers config.`
 			: '';
 		throw new Error(`Could not connect to server '${server.display_name}': ${message}.${authHint}`);
 	}
+}
 
+function newClient(): Client {
+	return new Client(
+		{name: 'call-mcp', version: '0.1.0'},
+		{capabilities: {}},
+	);
+}
+
+async function connectStdio(config: ServerConfig): Promise<Client> {
+	// The cast is needed because the SDK's own client transports don't satisfy its
+	// Transport interface under exactOptionalPropertyTypes (sessionId is typed
+	// `string | undefined` rather than optional).
+	const transport = new StdioClientTransport({
+		command: config.command!,
+		args: config.args ?? [],
+		env: {...getDefaultEnvironment(), ...config.env},
+	}) as Transport;
+
+	const client = newClient();
+	await client.connect(transport);
 	return client;
+}
+
+async function connectHttp(server: ConfiguredServer, config: ServerConfig): Promise<Client> {
+	// A configured Authorization header takes precedence; otherwise the MCP OAuth
+	// flow is available should the server demand it.
+	const hasAuthHeader = Object.keys(config.headers ?? {}).some((h) => h.toLowerCase() === 'authorization');
+	const authProvider = hasAuthHeader
+		? undefined
+		: await FileOAuthClientProvider.create(server.display_name, config.url!, config.oauth);
+
+	const makeTransport = () => new StreamableHTTPClientTransport(new URL(config.url!), {
+		...(config.headers ? {requestInit: {headers: config.headers}} : {}),
+		...(authProvider ? {authProvider} : {}),
+	});
+
+	const transport = makeTransport();
+	const client = newClient();
+	try {
+		await client.connect(transport as Transport);
+		return client;
+	} catch (err) {
+		if (!authProvider || !(err instanceof UnauthorizedError)) {
+			throw err;
+		}
+	}
+
+	// The server demanded authorization and the provider has opened the browser.
+	// Wait for the redirect to land, finish the code exchange, then connect afresh.
+	const code = await authProvider.waitForAuthorizationCode();
+	await transport.finishAuth(code);
+	const retryClient = newClient();
+	await retryClient.connect(makeTransport() as Transport);
+	return retryClient;
 }
