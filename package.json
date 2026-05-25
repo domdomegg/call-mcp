@@ -1,6 +1,6 @@
 {
   "name": "call-mcp",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "CLI for calling MCP servers — Streamable HTTP, stdio, or your claude.ai connectors (reusing the Claude Code login)",
   "license": "MIT",
   "author": "Adam Jones (domdomegg)",
