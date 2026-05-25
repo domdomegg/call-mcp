@@ -160,9 +160,29 @@ export class FileOAuthClientProvider implements OAuthClientProvider {
 		process.stderr.write(`Authorization required for '${this.serverName}'.\n`
 			+ `Opening your browser — if nothing happens, open this URL yourself:\n  ${authorizationUrl.toString()}\n`);
 
-		const opener = process.platform === 'darwin' ? 'open' : (process.platform === 'win32' ? 'start' : 'xdg-open');
+		// The URL comes from server-controlled metadata, so treat it as untrusted:
+		// only hand http(s) URLs to the OS opener, pass it as an argument (never
+		// through a shell), and otherwise rely on the printed URL above.
+		if (authorizationUrl.protocol !== 'https:' && authorizationUrl.protocol !== 'http:') {
+			return;
+		}
+
+		const target = authorizationUrl.toString();
+		let command: string;
+		let args: string[];
+		if (process.platform === 'darwin') {
+			command = 'open';
+			args = [target];
+		} else if (process.platform === 'win32') {
+			command = 'rundll32';
+			args = ['url.dll,FileProtocolHandler', target];
+		} else {
+			command = 'xdg-open';
+			args = [target];
+		}
+
 		try {
-			const child = spawn(opener, [authorizationUrl.toString()], {stdio: 'ignore', detached: true, shell: process.platform === 'win32'});
+			const child = spawn(command, args, {stdio: 'ignore', detached: true});
 			child.unref();
 			child.on('error', () => {/* The URL is already printed; nothing else to do. */});
 		} catch {
