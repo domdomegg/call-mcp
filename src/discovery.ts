@@ -15,6 +15,9 @@ export type McpServer = {
 
 export class DiscoveryError extends Error {}
 
+/** The minimal shape resolveServer needs — claude.ai connectors and local-config servers both satisfy it. */
+export type ResolvableServer = {id: string; display_name: string};
+
 type McpServersResponse = {
 	data?: McpServer[];
 	error?: {message?: string};
@@ -41,10 +44,10 @@ export async function listServers(token: Token): Promise<McpServer[]> {
 
 /**
  * Resolves a user-supplied server reference to a server.
- * Accepts an exact id (`mcpsrv_...`), an exact display name, or a unique
- * case-insensitive display-name prefix.
+ * Accepts an exact id (`mcpsrv_...` or `local:<name>`), an exact display name,
+ * or a unique case-insensitive display-name prefix.
  */
-export function resolveServer(servers: McpServer[], ref: string): McpServer {
+export function resolveServer<T extends ResolvableServer>(servers: T[], ref: string): T {
 	const byId = servers.find((s) => s.id === ref);
 	if (byId) {
 		return byId;
@@ -76,10 +79,10 @@ export function resolveServer(servers: McpServer[], ref: string): McpServer {
 }
 
 /** Returns the single server matching `predicate`, or undefined if zero or many match. */
-function uniqueMatch(
-	servers: McpServer[],
-	predicate: (s: McpServer) => boolean,
-): McpServer | undefined {
+function uniqueMatch<T extends ResolvableServer>(
+	servers: T[],
+	predicate: (s: T) => boolean,
+): T | undefined {
 	const matches = servers.filter(predicate);
 	return matches.length === 1 ? matches[0] : undefined;
 }

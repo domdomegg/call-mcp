@@ -1,26 +1,34 @@
 #!/usr/bin/env node
 import {parseArgs} from 'node:util';
-import {AuthError, getToken} from './auth.js';
+import {AuthError, getToken, type Token} from './auth.js';
 import {callTool, connect, listTools} from './client.js';
-import {DiscoveryError, listServers, resolveServer} from './discovery.js';
+import {
+	DiscoveryError, listServers, resolveServer, type McpServer,
+} from './discovery.js';
+import {
+	connectLocal, loadLocalServers, LocalConfigError, type LocalServer,
+} from './local-servers.js';
 import {ConnectorAuthError} from './transport.js';
 
-const HELP = `call-mcp — a CLI client for your claude.ai-configured MCP servers
+const HELP = `call-mcp — a CLI client for your claude.ai-configured and local MCP servers
 
 call-mcp talks to the MCP servers ("connectors") you have set up in claude.ai. It
-reuses the Claude Code OAuth token, so there is no separate login.
+reuses the Claude Code OAuth token, so there is no separate login. It can also
+talk directly to MCP servers you define in a local config file (Streamable HTTP
+or stdio) — see LOCAL SERVERS below.
 
 USAGE
   call-mcp <command> [arguments] [options]
 
 COMMANDS
-  list                       List your claude.ai MCP servers.
+  list                       List your claude.ai and locally-configured MCP servers.
   tools <server>             List the tools a server exposes.
   call  <server> <tool>      Call a tool on a server.
   help                       Show this help. (also: -h, --help)
 
 ARGUMENTS
-  <server>   A server id (mcpsrv_...) or display name. Display names are
+  <server>   A server id (mcpsrv_...), a display name, or the name of a server
+             from your local config (id local:<name>). Display names are
              matched case-insensitively; a unique name prefix also works,
              e.g. 'Google Drive', 'google', or the full id.
   <tool>     The exact tool name as shown by 'call-mcp tools <server>'.
@@ -43,7 +51,8 @@ OUTPUT
   'call-mcp list | jq'.
 
   list           default: [{ id, display_name, url }]
-                 --full:  raw /v1/mcp_servers objects
+                          (entries from the local config also carry "source": "local")
+                 --full:  raw /v1/mcp_servers objects; local entries include their config
   tools <s>      default: { server, tools: [{ name, description }] }
                  --full:  tools include inputSchema, outputSchema, annotations
   call <s> <t>   default: the tool's structuredContent, or its text content
@@ -127,6 +136,35 @@ EXAMPLES
     echo "$out" | jq -e '.error' >/dev/null \\
       && echo "failed: $(echo "$out" | jq -r '.error')" \\
       || echo "$out" | jq '.files'
+
+LOCAL SERVERS
+  Besides claude.ai connectors, call-mcp can talk directly to MCP servers you
+  define yourself. It reads the first of these files that exists:
+    1. $CALL_MCP_SERVERS_FILE (if set)
+    2. $XDG_CONFIG_HOME/call-mcp/servers.json (default ~/.config/call-mcp/servers.json)
+  The file uses the same "mcpServers" shape as Claude Code's MCP config, so
+  blocks can be copy-pasted between the two:
+    {
+      "mcpServers": {
+        "homelab":    { "type": "http",  "url": "https://mcp.example.com/mcp",
+                        "headers": { "Authorization": "Bearer \${MY_TOKEN}" } },
+        "everything": { "type": "stdio", "command": "npx",
+                        "args": ["-y", "@modelcontextprotocol/server-everything"] }
+      }
+    }
+  Notes:
+  - \${VAR} placeholders in url/headers/command/args/env expand from the
+    environment when the server is contacted, so secrets stay out of the file
+    (and out of 'list --full', which shows the unexpanded config).
+  - "http" means MCP Streamable HTTP. The legacy SSE transport is not supported.
+    Servers that need their own OAuth flow aren't supported yet — use a static
+    Authorization header, or keep them as claude.ai connectors.
+  - stdio servers are spawned per invocation and shut down afterwards. Fine for
+    request/response servers; not suitable for stateful ones (e.g. browser
+    automation sessions).
+  - Local servers appear in 'list' with "source": "local" and id local:<name>;
+    refer to them by name. Referencing a local server by its exact name works
+    without a Claude Code login ('list' still needs one).
 
 AUTH
   call-mcp resolves the Claude Code token in this order:
@@ -241,14 +279,47 @@ async function main(argv: string[]): Promise<number> {
 	}
 }
 
+/**
+ * Resolves a server reference across local-config servers and claude.ai
+ * connectors. An exact match on a local server's id or name short-circuits
+ * before any claude.ai call, so local servers work without a Claude Code login.
+ */
+async function resolveRef(ref: string): Promise<{local: LocalServer} | {remote: McpServer; token: Token}> {
+	const local = await loadLocalServers();
+	const exact = local.filter((s) => s.id === ref || s.display_name.toLowerCase() === ref.toLowerCase());
+	if (exact.length === 1) {
+		return {local: exact[0]!};
+	}
+
+	const token = await getToken();
+	const combined: (McpServer | LocalServer)[] = [...await listServers(token), ...local];
+	const resolved = resolveServer(combined, ref);
+	if ('source' in resolved && resolved.source === 'local') {
+		return {local: resolved};
+	}
+
+	return {remote: resolved as McpServer, token};
+}
+
 async function cmdList(full: boolean): Promise<number> {
+	const local = await loadLocalServers();
 	const token = await getToken();
 	const servers = await listServers(token);
 	if (full) {
-		return emit(servers);
+		return emit([
+			...servers,
+			...local.map((s) => ({
+				id: s.id, display_name: s.display_name, url: s.url, source: s.source, config_path: s.configPath, config: s.config,
+			})),
+		]);
 	}
 
-	return emit(servers.map((s) => ({id: s.id, display_name: s.display_name, url: s.url})));
+	return emit([
+		...servers.map((s) => ({id: s.id, display_name: s.display_name, url: s.url})),
+		...local.map((s) => ({
+			id: s.id, display_name: s.display_name, url: s.url, source: s.source,
+		})),
+	]);
 }
 
 async function cmdTools(ref: string | undefined, full: boolean): Promise<number> {
@@ -258,10 +329,12 @@ async function cmdTools(ref: string | undefined, full: boolean): Promise<number>
 		});
 	}
 
-	const token = await getToken();
-	const server = resolveServer(await listServers(token), ref);
+	const target = await resolveRef(ref);
+	const server = 'local' in target ? target.local : target.remote;
 
-	const client = await connect(server.id, token.accessToken);
+	const client = 'local' in target
+		? await connectLocal(target.local)
+		: await connect(target.remote.id, target.token.accessToken);
 	try {
 		const tools = await listTools(client);
 		if (full) {
@@ -329,10 +402,11 @@ async function cmdCall(
 		args = parsedArgs as Record<string, unknown>;
 	}
 
-	const token = await getToken();
-	const server = resolveServer(await listServers(token), ref);
+	const target = await resolveRef(ref);
 
-	const client = await connect(server.id, token.accessToken);
+	const client = 'local' in target
+		? await connectLocal(target.local)
+		: await connect(target.remote.id, target.token.accessToken);
 	try {
 		const result = (await callTool(client, toolName, args)) as {
 			content?: {type: string; text?: string}[];
@@ -380,6 +454,10 @@ async function handleError(err: unknown): Promise<number> {
 
 	if (err instanceof AuthError) {
 		return fail(err.message, {hint: 'See `call-mcp --help` (AUTH section).'});
+	}
+
+	if (err instanceof LocalConfigError) {
+		return fail(err.message, {hint: 'See `call-mcp --help` (LOCAL SERVERS section) for the expected config shape.'});
 	}
 
 	if (err instanceof DiscoveryError) {
