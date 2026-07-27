@@ -65,39 +65,39 @@ describe('parseConfiguredServers', () => {
 	test('rejects the legacy sse transport with a clear error', () => {
 		expect(() => parseConfiguredServers(JSON.stringify({
 			mcpServers: {legacy: {type: 'sse', url: 'https://legacy.example.com/sse'}},
-		}), path)).toThrowError(/sse.*not support/i);
+		}), path)).toThrow(/sse.*not support/i);
 	});
 
 	test('rejects unknown transport types', () => {
 		expect(() => parseConfiguredServers(JSON.stringify({
 			mcpServers: {odd: {type: 'websocket', url: 'wss://odd.example.com'}},
-		}), path)).toThrowError(ServersConfigError);
+		}), path)).toThrow(ServersConfigError);
 	});
 
 	test('rejects an http server without a url', () => {
 		expect(() => parseConfiguredServers(JSON.stringify({
 			mcpServers: {broken: {type: 'http'}},
-		}), path)).toThrowError(/missing "url"/);
+		}), path)).toThrow(/missing "url"/);
 	});
 
 	test('rejects a stdio server without a command', () => {
 		expect(() => parseConfiguredServers(JSON.stringify({
 			mcpServers: {broken: {type: 'stdio'}},
-		}), path)).toThrowError(/missing "command"/);
+		}), path)).toThrow(/missing "command"/);
 	});
 
 	test('rejects a server entry that is not an object', () => {
 		expect(() => parseConfiguredServers(JSON.stringify({
 			mcpServers: {broken: 'not-an-object'},
-		}), path)).toThrowError(/expected object/);
+		}), path)).toThrow(/expected object/);
 	});
 
 	test('rejects a file without an mcpServers object', () => {
-		expect(() => parseConfiguredServers(JSON.stringify({servers: {}}), path)).toThrowError(/"mcpServers" object/);
+		expect(() => parseConfiguredServers(JSON.stringify({servers: {}}), path)).toThrow(/"mcpServers" object/);
 	});
 
 	test('rejects invalid JSON', () => {
-		expect(() => parseConfiguredServers('not json', path)).toThrowError(/could not parse/i);
+		expect(() => parseConfiguredServers('not json', path)).toThrow(/could not parse/i);
 	});
 });
 
