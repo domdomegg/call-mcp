@@ -113,10 +113,6 @@ uses: it reads the MCP config the session was launched with
 shape) and authenticates with the session ingress token from
 `$CLAUDE_SESSION_INGRESS_TOKEN_FILE`.
 
-- The token is read fresh from its file on every connect (it rotates) and is
-  never printed, including by `list --full`.
-- Session servers only work inside the session that launched them — the route,
-  ids and token all die with it.
 - A server in your config file wins over a session server of the same name.
 - Session connectors reach real services, and call-mcp does not apply Claude
   Code's per-tool permission settings (`always_ask` etc.) from the session config.

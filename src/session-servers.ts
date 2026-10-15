@@ -6,9 +6,10 @@ import {parseConfiguredServers, ServersConfigError, type ConfiguredServer} from 
 export const SESSION_CONFIG_FILE_ENV = 'CALL_MCP_SESSION_CONFIG';
 
 /**
- * Where a Claude Code cloud session's launcher keeps the session ingress token.
- * The session itself exports CLAUDE_SESSION_INGRESS_TOKEN_FILE pointing here;
- * this default only matters if that variable is missing.
+ * Where a Claude Code cloud session's launcher keeps the session ingress token,
+ * used when CLAUDE_SESSION_INGRESS_TOKEN_FILE isn't set (Claude Code falls back
+ * to the same path). This is the launcher's directory, not the Claude Code
+ * config dir, so it deliberately ignores CLAUDE_CONFIG_DIR.
  */
 const DEFAULT_INGRESS_TOKEN_FILE = '/home/claude/.claude/remote/.session_ingress_token';
 
