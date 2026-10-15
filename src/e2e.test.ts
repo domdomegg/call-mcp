@@ -211,6 +211,9 @@ async function runMcpc(args: string[], envOverrides: Record<string, string> = {}
 					TEST_ONLY_PROXY_URL_OVERRIDE: baseUrl,
 					// Isolate from any servers config the developer running the tests has.
 					CALL_MCP_SERVERS_FILE: '/nonexistent/call-mcp-servers.json',
+					// Don't pick up a real Claude Code cloud session's servers when the tests run in one.
+					CLAUDE_CODE_REMOTE_SESSION_ID: '',
+					CALL_MCP_SESSION_CONFIG: '',
 					...envOverrides,
 				},
 			},

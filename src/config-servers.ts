@@ -4,7 +4,7 @@ import {join} from 'node:path';
 import {UnauthorizedError} from '@modelcontextprotocol/sdk/client/auth.js';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {getDefaultEnvironment, StdioClientTransport} from '@modelcontextprotocol/sdk/client/stdio.js';
-import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import {StreamableHTTPClientTransport, StreamableHTTPError} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type {Transport} from '@modelcontextprotocol/sdk/shared/transport.js';
 import {z} from 'zod';
 import {FileOAuthClientProvider, oauthCacheDir} from './oauth.js';
@@ -72,10 +72,17 @@ export type ConfiguredServer = {
 	display_name: string;
 	/** The URL for http servers, or the command line for stdio servers. */
 	url: string;
-	source: 'config';
+	/** "config" for the user's servers file, "session" for the Claude Code cloud session's own servers. */
+	source: 'config' | 'session';
 	configPath: string;
 	/** The raw (unexpanded) config block — ${VAR} expansion happens at connect time. */
 	config: ServerConfig;
+	/**
+	 * A file holding a bearer token to send as the Authorization header, read at
+	 * connect time (used for session servers, whose token is short-lived and
+	 * must not end up in `list --full` output).
+	 */
+	tokenFile?: string;
 };
 
 /** Candidate config file locations; the first existing file wins. */
@@ -184,6 +191,9 @@ export function expandEnv<T>(value: T): T {
  */
 export async function connectConfiguredServer(server: ConfiguredServer): Promise<Client> {
 	const config = expandEnv(server.config);
+	if (server.tokenFile) {
+		config.headers = {...config.headers, Authorization: `Bearer ${await readTokenFile(server)}`};
+	}
 
 	try {
 		return config.type === 'http'
@@ -191,11 +201,34 @@ export async function connectConfiguredServer(server: ConfiguredServer): Promise
 			: await connectStdio(config);
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
-		const authHint = /\b(401|403|unauthorized|forbidden)\b/i.test(message)
-			? ` If the server uses OAuth, retry and approve the authorization in your browser (cached under ${oauthCacheDir()}); for static credentials, add an Authorization header under "headers" in the servers config.`
-			: '';
+		// The SDK's StreamableHTTPError carries the HTTP status as `code`; its message
+		// only has the response body, which may not mention the status.
+		const status = err instanceof StreamableHTTPError ? err.code : undefined;
+		const isAuthError = status === 401 || status === 403 || /\b(401|403|unauthorized|forbidden)\b/i.test(message);
+		let authHint = '';
+		if (isAuthError && server.source === 'session') {
+			authHint = ' Session servers only work inside the Claude Code cloud session that launched them.';
+		} else if (isAuthError) {
+			authHint = ` If the server uses OAuth, retry and approve the authorization in your browser (cached under ${oauthCacheDir()}); for static credentials, add an Authorization header under "headers" in the servers config.`;
+		}
+
 		throw new Error(`Could not connect to server '${server.display_name}': ${message}.${authHint}`);
 	}
+}
+
+async function readTokenFile(server: ConfiguredServer): Promise<string> {
+	let token: string;
+	try {
+		token = (await readFile(server.tokenFile!, 'utf8')).trim();
+	} catch (err) {
+		throw new Error(`Could not connect to server '${server.display_name}': could not read its token file ${server.tokenFile}: ${(err as Error).message}`);
+	}
+
+	if (!token) {
+		throw new Error(`Could not connect to server '${server.display_name}': its token file ${server.tokenFile} is empty`);
+	}
+
+	return token;
 }
 
 function newClient(): Client {

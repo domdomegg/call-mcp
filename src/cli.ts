@@ -8,20 +8,24 @@ import {
 import {
 	connectConfiguredServer, loadConfiguredServers, ServersConfigError, type ConfiguredServer,
 } from './config-servers.js';
+import {loadSessionServers} from './session-servers.js';
 import {ConnectorAuthError} from './transport.js';
 
 const HELP = `call-mcp — a CLI for calling MCP servers
 
 call-mcp talks to MCP servers you define in a small config file — over MCP
 Streamable HTTP or stdio — and to the connectors you have set up in claude.ai,
-reusing the Claude Code OAuth token so there is no separate login.
-See CONFIGURING SERVERS for the config file, and AUTH for the claude.ai side.
+reusing the Claude Code OAuth token so there is no separate login. Inside a
+Claude Code cloud session it also picks up that session's own servers.
+See CONFIGURING SERVERS for the config file, SESSION SERVERS for cloud
+sessions, and AUTH for the claude.ai side.
 
 USAGE
   call-mcp <command> [arguments] [options]
 
 COMMANDS
-  list                       List your configured servers and claude.ai connectors.
+  list                       List your configured servers, session servers, and
+                             claude.ai connectors.
   tools <server>             List the tools a server exposes.
   call  <server> <tool>      Call a tool on a server.
   help                       Show this help. (also: -h, --help)
@@ -52,8 +56,10 @@ OUTPUT
 
   list           default: [{ id, display_name, url, source }]
                           (source is "config" for servers from your config file,
-                          "claude.ai" for connectors)
-                 --full:  config servers include their (unexpanded) config;
+                          "session" for the cloud session's servers, "claude.ai"
+                          for connectors)
+                 --full:  config and session servers include their
+                          (unexpanded) config, never the session token;
                           claude.ai entries are the raw /v1/mcp_servers objects
   tools <s>      default: { server, tools: [{ name, description }] }
                  --full:  tools include inputSchema, outputSchema, annotations
@@ -88,6 +94,24 @@ CONFIGURING SERVERS
   - Configured servers work without any Claude Code login when referenced by
     their exact name; 'list' just skips claude.ai connectors (with a note on
     stderr) if you aren't logged in.
+
+SESSION SERVERS
+  Inside a Claude Code cloud session (claude.ai/code), the connectors attached
+  to the session appear automatically with "source": "session" — no login or
+  config needed. call-mcp reads the MCP config the session was launched with
+  (/tmp/mcp-config-$CLAUDE_CODE_REMOTE_SESSION_ID.json) and authenticates with
+  the session's own ingress token ($CLAUDE_SESSION_INGRESS_TOKEN_FILE), which
+  it reads at connect time and never prints.
+  Notes:
+  - Session servers live and die with the session: the route, ids and token
+    only work inside the session that launched them.
+  - Name clashes: a server in your config file wins over a session server of
+    the same name; a session server wins over a same-named claude.ai connector
+    when referenced by exact name.
+  - Session connectors reach real services (e.g. your own MCP servers), and
+    call-mcp does not apply Claude Code's per-tool permission settings.
+  - Point CALL_MCP_SESSION_CONFIG at a file to use a non-default config
+    location.
 
 QUOTING
   --args takes a JSON string, and JSON uses double quotes — so wrap the whole
@@ -281,14 +305,25 @@ async function main(argv: string[]): Promise<number> {
 }
 
 /**
- * Resolves a server reference across configured servers and claude.ai
- * connectors. An exact match on a configured server's name short-circuits
- * before any claude.ai call, so configured servers work without a Claude Code
- * login; if claude.ai discovery fails, resolution falls back to configured
- * servers only.
+ * Servers that need no claude.ai discovery: those in the user's config file,
+ * plus the Claude Code cloud session's own servers when running in one. A
+ * config-file server shadows a session server of the same name.
+ */
+async function loadLocalServers(): Promise<ConfiguredServer[]> {
+	const [configured, session] = await Promise.all([loadConfiguredServers(), loadSessionServers()]);
+	const taken = new Set(configured.map((s) => s.display_name.toLowerCase()));
+	return [...configured, ...session.filter((s) => !taken.has(s.display_name.toLowerCase()))];
+}
+
+/**
+ * Resolves a server reference across local (config and session) servers and
+ * claude.ai connectors. An exact match on a local server's name short-circuits
+ * before any claude.ai call, so local servers work without a Claude Code
+ * login; if claude.ai discovery fails, resolution falls back to local servers
+ * only.
  */
 async function resolveRef(ref: string): Promise<{configured: ConfiguredServer} | {remote: McpServer; token: Token}> {
-	const configured = await loadConfiguredServers();
+	const configured = await loadLocalServers();
 	const exact = configured.filter((s) => s.id === ref || s.display_name.toLowerCase() === ref.toLowerCase());
 	if (exact.length === 1) {
 		return {configured: exact[0]!};
@@ -308,15 +343,15 @@ async function resolveRef(ref: string): Promise<{configured: ConfiguredServer} |
 	}
 
 	const resolved = resolveServer([...configured, ...connectors] as (McpServer | ConfiguredServer)[], ref);
-	if ('source' in resolved && resolved.source === 'config') {
+	if ('source' in resolved) {
 		return {configured: resolved};
 	}
 
-	return {remote: resolved as McpServer, token};
+	return {remote: resolved, token};
 }
 
 async function cmdList(full: boolean): Promise<number> {
-	const configured = await loadConfiguredServers();
+	const configured = await loadLocalServers();
 
 	let connectors: McpServer[] = [];
 	try {
@@ -324,6 +359,7 @@ async function cmdList(full: boolean): Promise<number> {
 		connectors = await listServers(token);
 	} catch (err) {
 		// claude.ai connectors are optional: if you have your own servers configured
+		// (or are in a cloud session, where the CC token can't list them anyway)
 		// and aren't logged in (or discovery is unreachable), still list yours.
 		if (!(err instanceof AuthError || err instanceof DiscoveryError) || configured.length === 0) {
 			throw err;
