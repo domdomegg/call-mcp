@@ -230,6 +230,8 @@ async function runCli(args: string[], envOverrides: Record<string, string> = {})
 					TEST_ONLY_API_URL_OVERRIDE: httpBaseUrl,
 					TEST_ONLY_PROXY_URL_OVERRIDE: httpBaseUrl,
 					CALL_MCP_SERVERS_FILE: goodConfigPath,
+					// Don't pick up a real Claude Code cloud session's servers when the tests run in one.
+					CALL_MCP_NO_SESSION: '1',
 					E2E_FIXTURE_VALUE: 'expanded-fixture-value',
 					E2E_HTTP_TOKEN: 'expanded-http-token',
 					...envOverrides,

@@ -3,7 +3,8 @@
 A CLI for calling MCP servers: define servers in a small config file (MCP
 Streamable HTTP or stdio, including OAuth-secured servers), and/or use the
 connectors you've set up in claude.ai (those reuse the Claude Code OAuth token
-— no separate login).
+— no separate login). Inside a Claude Code cloud session, the session's own
+connectors are picked up automatically too.
 
 Every command prints JSON to stdout, on success and on error alike, so output
 is always safe to pipe into `jq` or parse in a script.
@@ -93,6 +94,35 @@ call-mcp tools Aggregator --full | jq '.tools[]
 Run `call-mcp help` for the full set, including cross-server tool search and
 error-handling recipes.
 
+## Claude Code cloud sessions
+
+When call-mcp runs inside a Claude Code cloud session (claude.ai/code), the
+connectors attached to that session show up automatically with
+`"source": "session"` — no login or config needed:
+
+```
+$ call-mcp list
+[{"id":"Aggregator","display_name":"Aggregator","url":"https://api.anthropic.com/v2/ccr-sessions/cse_.../mcp?...","source":"session"}, ...]
+```
+
+The claude.ai connector path doesn't work in a cloud session: the in-container
+token is scoped for Claude Code itself and is refused by `/v1/mcp_servers` and
+the connector proxy. Instead, call-mcp uses the same route the session itself
+uses: it reads the MCP config the session was launched with
+(`/tmp/mcp-config-$CLAUDE_CODE_REMOTE_SESSION_ID.json`, same `mcpServers`
+shape) and authenticates with the session ingress token from
+`$CLAUDE_SESSION_INGRESS_TOKEN_FILE`.
+
+- The token is read fresh from its file on every connect (it rotates) and is
+  never printed, including by `list --full`.
+- Session servers only work inside the session that launched them — the route,
+  ids and token all die with it.
+- A server in your config file wins over a session server of the same name.
+- Session connectors reach real services, and call-mcp does not apply Claude
+  Code's per-tool permission settings (`always_ask` etc.) from the session config.
+- Opt out with `--no-session` or `CALL_MCP_NO_SESSION=1`; point
+  `CALL_MCP_SESSION_CONFIG` at a file to override the config location.
+
 ## How it works
 
 **Servers from your config file:**
@@ -139,6 +169,7 @@ error-handling recipes.
 | File                    | Responsibility                                                       |
 | ----------------------- | -------------------------------------------------------------------- |
 | `src/config-servers.ts` | Servers config: load + validate `servers.json`, connect (http/stdio) |
+| `src/session-servers.ts` | Detect + load a Claude Code cloud session's own servers              |
 | `src/oauth.ts`          | OAuth for configured servers: browser flow, loopback callback, token cache |
 | `src/auth.ts`           | Resolve + validate the Claude Code token (env / Keychain / file)     |
 | `src/discovery.ts`      | List claude.ai connectors, resolve a user ref to a server            |
