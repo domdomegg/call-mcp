@@ -8,7 +8,7 @@ import {
 import {
 	connectConfiguredServer, loadConfiguredServers, ServersConfigError, type ConfiguredServer,
 } from './config-servers.js';
-import {loadSessionServers, NO_SESSION_ENV} from './session-servers.js';
+import {loadSessionServers} from './session-servers.js';
 import {ConnectorAuthError} from './transport.js';
 
 const HELP = `call-mcp — a CLI for calling MCP servers
@@ -46,8 +46,6 @@ OPTIONS
                   slim objects; --full adds tool input/output schemas,
                   annotations, raw server fields, and the complete tool-call
                   result envelope.
-  --no-session    Ignore the Claude Code cloud session's servers (see SESSION
-                  SERVERS). Same as setting CALL_MCP_NO_SESSION=1.
   -h, --help      Show this help.
 
 OUTPUT
@@ -112,8 +110,8 @@ SESSION SERVERS
     when referenced by exact name.
   - Session connectors reach real services (e.g. your own MCP servers), and
     call-mcp does not apply Claude Code's per-tool permission settings.
-  - Opt out with --no-session or CALL_MCP_NO_SESSION=1. Point
-    CALL_MCP_SESSION_CONFIG at a file to use a non-default config location.
+  - Point CALL_MCP_SESSION_CONFIG at a file to use a non-default config
+    location.
 
 QUOTING
   --args takes a JSON string, and JSON uses double quotes — so wrap the whole
@@ -272,7 +270,6 @@ async function main(argv: string[]): Promise<number> {
 			options: {
 				args: {type: 'string'},
 				full: {type: 'boolean', default: false},
-				'no-session': {type: 'boolean', default: false},
 				help: {type: 'boolean', short: 'h', default: false},
 			},
 		});
@@ -291,10 +288,6 @@ async function main(argv: string[]): Promise<number> {
 	if (!command) {
 		await writeOut(HELP);
 		return fail('No command given.', {hint: 'Run `call-mcp --help` for usage.'});
-	}
-
-	if (values['no-session']) {
-		process.env[NO_SESSION_ENV] = '1';
 	}
 
 	switch (command) {

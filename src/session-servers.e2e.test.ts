@@ -147,7 +147,6 @@ async function runCli(args: string[], envOverrides: Record<string, string> = {})
 					CLAUDE_CODE_OAUTH_TOKEN: '',
 					CLAUDE_CONFIG_DIR: join(tempDir, 'no-claude-config'),
 					CALL_MCP_SERVERS_FILE: join(tempDir, 'no-servers.json'),
-					CALL_MCP_NO_SESSION: '',
 					CALL_MCP_SESSION_CONFIG: sessionConfigPath,
 					CLAUDE_SESSION_INGRESS_TOKEN_FILE: tokenPath,
 					...envOverrides,
@@ -191,14 +190,9 @@ describe('list with session servers', () => {
 		expect(json[0].config.headers).toEqual({'X-MCP-Server-ID': 'srv-a', 'X-Session-UUID': 'cse_e2e'});
 	});
 
-	test('--no-session hides them', async () => {
-		const {json} = await runCli(['list', '--no-session']);
+	test('outside a session there are none', async () => {
+		const {json} = await runCli(['list'], {CALL_MCP_SESSION_CONFIG: '', CLAUDE_CODE_REMOTE_SESSION_ID: ''});
 		// Nothing left to list, and no claude.ai login: the auth error surfaces.
-		expect(json.error).toMatch(/credentials/i);
-	});
-
-	test('CALL_MCP_NO_SESSION hides them', async () => {
-		const {json} = await runCli(['list'], {CALL_MCP_NO_SESSION: '1'});
 		expect(json.error).toMatch(/credentials/i);
 	});
 

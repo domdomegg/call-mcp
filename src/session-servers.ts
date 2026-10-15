@@ -5,9 +5,6 @@ import {parseConfiguredServers, ServersConfigError, type ConfiguredServer} from 
 /** Environment variable that points at a specific session MCP config file (overrides detection). */
 export const SESSION_CONFIG_FILE_ENV = 'CALL_MCP_SESSION_CONFIG';
 
-/** Environment variable that, when set to a non-empty value, disables session servers. */
-export const NO_SESSION_ENV = 'CALL_MCP_NO_SESSION';
-
 /**
  * Where a Claude Code cloud session's launcher keeps the session ingress token.
  * The session itself exports CLAUDE_SESSION_INGRESS_TOKEN_FILE pointing here;
@@ -43,7 +40,7 @@ export function sessionTokenPath(): string {
 
 /**
  * Loads the MCP servers of the Claude Code cloud session call-mcp is running
- * in, or returns [] when not in a session (or session servers are disabled).
+ * in, or returns [] when not in a session.
  *
  * The session's config file already uses the "mcpServers" shape (http servers
  * pointing at a per-session Anthropic route), minus the Authorization header —
@@ -51,10 +48,6 @@ export function sessionTokenPath(): string {
  * never held on the server object or printed by `list --full`.
  */
 export async function loadSessionServers(): Promise<ConfiguredServer[]> {
-	if (process.env[NO_SESSION_ENV]?.trim()) {
-		return [];
-	}
-
 	const path = sessionConfigPath();
 	if (!path) {
 		return [];

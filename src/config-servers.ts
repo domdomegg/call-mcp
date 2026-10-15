@@ -207,7 +207,7 @@ export async function connectConfiguredServer(server: ConfiguredServer): Promise
 		const isAuthError = status === 401 || status === 403 || /\b(401|403|unauthorized|forbidden)\b/i.test(message);
 		let authHint = '';
 		if (isAuthError && server.source === 'session') {
-			authHint = ' Session servers only work inside the Claude Code cloud session that launched them; set CALL_MCP_NO_SESSION=1 to skip them.';
+			authHint = ' Session servers only work inside the Claude Code cloud session that launched them.';
 		} else if (isAuthError) {
 			authHint = ` If the server uses OAuth, retry and approve the authorization in your browser (cached under ${oauthCacheDir()}); for static credentials, add an Authorization header under "headers" in the servers config.`;
 		}

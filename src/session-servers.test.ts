@@ -76,7 +76,6 @@ describe('sessionTokenPath', () => {
 
 describe('loadSessionServers', () => {
 	test('maps the session config to session-sourced http servers with a token file', async () => {
-		vi.stubEnv('CALL_MCP_NO_SESSION', '');
 		vi.stubEnv('CALL_MCP_SESSION_CONFIG', configPath);
 		vi.stubEnv('CLAUDE_SESSION_INGRESS_TOKEN_FILE', '/run/token');
 
@@ -96,21 +95,13 @@ describe('loadSessionServers', () => {
 		}]);
 	});
 
-	test('returns [] when disabled with CALL_MCP_NO_SESSION', async () => {
-		vi.stubEnv('CALL_MCP_NO_SESSION', '1');
-		vi.stubEnv('CALL_MCP_SESSION_CONFIG', configPath);
-		expect(await loadSessionServers()).toEqual([]);
-	});
-
 	test('returns [] when the detected config file does not exist', async () => {
-		vi.stubEnv('CALL_MCP_NO_SESSION', '');
 		vi.stubEnv('CALL_MCP_SESSION_CONFIG', '');
 		vi.stubEnv('CLAUDE_CODE_REMOTE_SESSION_ID', 'cse_does_not_exist_for_tests');
 		expect(await loadSessionServers()).toEqual([]);
 	});
 
 	test('errors when an explicit CALL_MCP_SESSION_CONFIG does not exist', async () => {
-		vi.stubEnv('CALL_MCP_NO_SESSION', '');
 		vi.stubEnv('CALL_MCP_SESSION_CONFIG', join(tempDir, 'missing.json'));
 		await expect(loadSessionServers()).rejects.toThrow(ServersConfigError);
 	});

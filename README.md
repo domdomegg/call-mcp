@@ -120,8 +120,7 @@ shape) and authenticates with the session ingress token from
 - A server in your config file wins over a session server of the same name.
 - Session connectors reach real services, and call-mcp does not apply Claude
   Code's per-tool permission settings (`always_ask` etc.) from the session config.
-- Opt out with `--no-session` or `CALL_MCP_NO_SESSION=1`; point
-  `CALL_MCP_SESSION_CONFIG` at a file to override the config location.
+- Point `CALL_MCP_SESSION_CONFIG` at a file to override the config location.
 
 ## How it works
 
